@@ -1,0 +1,22 @@
+# Build output (Makefile and CMake both emit here)
+build/
+
+# Object files / libs / binaries
+*.o
+*.a
+*.dylib
+demo_traditional
+demo_callbacks
+
+# CMake artifacts (if configured outside build/)
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+
+# Debugger / tooling
+*.dSYM/
+.lldbinit
+compile_commands.json
+
+# macOS
+.DS_Store
