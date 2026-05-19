@@ -1,9 +1,10 @@
 /*
- * gfx.c — implementation of the gfx.h drawing helpers.
+ * gfx.c — implementation of the gfx.h drawing helpers (C).
  *
- * Compiled as C (see Makefile / CMakeLists.txt). The C++ example links against
- * the object produced here; the `extern "C"` guard in gfx.h is what makes the
- * symbol names line up across the language boundary.
+ * This is the C example's own, self-contained copy of the draw helpers. It is
+ * compiled as C (see the top-level Makefile / CMakeLists.txt) and linked only
+ * into the C demo. The C++ example has a separate, idiomatic implementation in
+ * examples/cpp/gfx.cpp — nothing is shared between the two.
  *
  * Every routine assumes the caller has already chosen a colour via
  * gfx_set_color() (or gfx_clear()); nothing here changes the colour except the

@@ -1,23 +1,27 @@
 # sdl3-2d
 
-A small, reusable **SDL3** 2D starter for macOS. It bootstraps a window, a
-render/input loop, and a handful of documented shape-drawing helpers — usable
-from **both C and C++**, with **two game-loop styles** to learn from.
+A small, reusable **SDL3** 2D starter for macOS. It ships **two fully
+independent examples** — one pure **C**, one pure **C++** — each bootstrapping
+a window, a render/input loop, and its own documented shape-drawing helpers,
+with a different **game-loop style** to learn from.
+
+The two examples share **no source**. Copy either folder out on its own and it
+still builds — that independence (not code reuse) is the point of the template.
 
 ## What you get
 
-| File | Purpose |
+| Path | Purpose |
 |---|---|
-| `include/gfx.h` | The drawing API (also the API reference — every function is documented inline). `extern "C"` so it works from C and C++. |
-| `src/gfx.c` | Implementation: point, line, rect, circle, triangle (outline + filled). Compiled as C. |
-| `examples/traditional.c` | C example using a hand-written `while` game loop. |
-| `examples/callbacks.cpp` | C++ example using SDL3's `SDL_AppInit/Iterate/Event/Quit` callback model. |
-| `Makefile` | Primary build/run/debug driver (pkg-config based). |
+| `examples/c/gfx.h` + `gfx.c` | The C example's own drawing API + implementation (also the API reference — every function is documented inline). Plain C, `gfx_` prefix. |
+| `examples/c/traditional.c` | C example using a hand-written `while` game loop. |
+| `examples/cpp/gfx.hpp` + `gfx.cpp` | The C++ example's own, idiomatic copy: a `gfx::` namespace, no `extern "C"`. |
+| `examples/cpp/callbacks.cpp` | C++ example using SDL3's `SDL_AppInit/Iterate/Event/Quit` callback model. |
+| `Makefile` | Primary build/run/debug driver (pkg-config based). Independent targets. |
 | `CMakeLists.txt` | Alternative build path (IDE-friendly, `find_package(SDL3)`). |
 
 Both examples render the same scene (every helper exercised once, plus a
 delta-time–driven bouncing ball) so you can compare the two loop styles
-side by side.
+side by side — implemented separately in each language.
 
 ## Prerequisites (one-time, manual)
 
@@ -64,29 +68,36 @@ cmake --build build
 ## The drawing API
 
 All coordinates are `float`. Every shape draws with the renderer's *current*
-draw colour, so the pattern is always: pick a colour, then draw.
+draw colour, so the pattern is always: pick a colour, then draw. The two
+examples expose the same operations under each language's native scoping —
+the **C** copy uses a `gfx_` prefix, the **C++** copy a `gfx::` namespace:
 
 ```c
-gfx_clear      (renderer, r, g, b);                 // clear the frame
-gfx_set_color  (renderer, r, g, b, a);              // 0..255 each
-gfx_point      (renderer, x, y);
-gfx_line       (renderer, x1, y1, x2, y2);
-gfx_rect       (renderer, x, y, w, h);              // outline
-gfx_fill_rect  (renderer, x, y, w, h);              // filled
-gfx_circle     (renderer, cx, cy, radius);          // outline
-gfx_fill_circle(renderer, cx, cy, radius);          // filled
-gfx_triangle   (renderer, x1,y1, x2,y2, x3,y3);     // outline
-gfx_fill_triangle(renderer, x1,y1, x2,y2, x3,y3);   // filled
+// C  (examples/c/gfx.h)            // C++ (examples/cpp/gfx.hpp)
+gfx_clear        (ren, r,g,b);      gfx::clear        (ren, r,g,b);
+gfx_set_color    (ren, r,g,b,a);    gfx::set_color    (ren, r,g,b,a);  // 0..255
+gfx_point        (ren, x,y);        gfx::point        (ren, x,y);
+gfx_line         (ren, x1,y1,x2,y2);gfx::line         (ren, x1,y1,x2,y2);
+gfx_rect         (ren, x,y,w,h);    gfx::rect         (ren, x,y,w,h);   // outline
+gfx_fill_rect    (ren, x,y,w,h);    gfx::fill_rect    (ren, x,y,w,h);   // filled
+gfx_circle       (ren, cx,cy,r);    gfx::circle       (ren, cx,cy,r);   // outline
+gfx_fill_circle  (ren, cx,cy,r);    gfx::fill_circle  (ren, cx,cy,r);   // filled
+gfx_triangle     (ren, ...);        gfx::triangle     (ren, ...);       // outline
+gfx_fill_triangle(ren, ...);        gfx::fill_triangle(ren, ...);       // filled
 ```
 
-See `include/gfx.h` for full per-function docs and caveats.
+See `examples/c/gfx.h` and `examples/cpp/gfx.hpp` for full per-function docs
+and caveats.
 
 ## Customising
 
-- **Want a C++ traditional-loop or a C callback variant?** Copy one example,
-  swap the loop style, and add a target. Makefile: add a rule mirroring the
-  existing ones. CMake: one `add_executable` + `target_link_libraries(... gfx
-  SDL3::SDL3)`.
+- **Want a C++ traditional-loop or a C callback variant?** Copy the whole
+  `examples/c` or `examples/cpp` folder (it is self-contained — gfx + the
+  example), swap the loop style, and add a target. Makefile: add a rule
+  mirroring the existing ones (compile that folder's `gfx` plus its example,
+  no shared object). CMake: one `add_executable(... that_folder/gfx.* the
+  example)` + `target_include_directories(... that_folder)` +
+  `target_link_libraries(... SDL3::SDL3)`.
 - **Resolution / title:** edit the `SDL_CreateWindowAndRenderer(...)` call in
   the example you use.
 - **Frame pacing:** vsync is on (`SDL_SetRenderVSync(renderer, 1)`). If a

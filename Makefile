@@ -1,11 +1,16 @@
 # Makefile — primary build / run / debug driver for the SDL3 2D template.
 #
-# No CMake required: SDL3's compiler and linker flags are discovered via
-# pkg-config (Homebrew installs sdl3.pc when you `brew install sdl3`). The
-# shared draw helper (src/gfx.c) is compiled ONCE as C; the C example links it
-# with clang, the C++ example with clang++ (so the C++ runtime is linked in).
-# The symbol names line up across that boundary because gfx.h wraps the API in
-# `extern "C"`.
+# No CMake required: SDL3's compiler/linker flags are discovered via
+# pkg-config (Homebrew installs sdl3.pc when you `brew install sdl3`).
+#
+# This template ships TWO fully independent examples that share NO source:
+#
+#   examples/c/    — C:   gfx.c + gfx.h + traditional.c (hand-written loop)
+#   examples/cpp/  — C++: gfx.cpp + gfx.hpp + callbacks.cpp (SDL callbacks)
+#
+# Each demo is built ONLY from its own folder; the C and C++ object trees live
+# in separate build subdirectories and never cross. Copy either folder out and
+# it stands alone.
 #
 # Targets:
 #   make             build both demos into build/        (release, -O2)
@@ -39,10 +44,15 @@ else
 OPT := -O2
 endif
 
-WARN     := -Wall -Wextra
-COMMON   := $(WARN) $(OPT) -Iinclude $(SDL_CFLAGS)
-CFLAGS   := -std=c11   $(COMMON)
-CXXFLAGS := -std=c++17 $(COMMON)
+WARN := -Wall -Wextra
+
+# Each example only ever sees its own directory on the include path, so there
+# is no way for one to accidentally pick up the other's header.
+C_DIR   := examples/c
+CPP_DIR := examples/cpp
+
+CFLAGS   := -std=c11   $(WARN) $(OPT) -I$(C_DIR)   $(SDL_CFLAGS)
+CXXFLAGS := -std=c++17 $(WARN) $(OPT) -I$(CPP_DIR) $(SDL_CFLAGS)
 LDLIBS   := $(SDL_LIBS)
 
 BUILD   := build
@@ -60,20 +70,23 @@ check-sdl:
 		echo "Install it first:  brew install sdl3"; \
 		exit 1; }
 
-$(BUILD):
-	mkdir -p $(BUILD)
+# Separate object subdirectories keep the two examples' artifacts disjoint.
+$(BUILD)/c $(BUILD)/cpp:
+	mkdir -p $@
 
-# Shared draw-helper object, compiled as C.
-$(BUILD)/gfx.o: src/gfx.c include/gfx.h | $(BUILD)
+# --- C example: its own gfx.o, compiled and linked with the C compiler. ---
+$(BUILD)/c/gfx.o: $(C_DIR)/gfx.c $(C_DIR)/gfx.h | $(BUILD)/c
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# C example: compiled and linked with the C compiler.
-$(C_BIN): examples/traditional.c $(BUILD)/gfx.o | $(BUILD)
+$(C_BIN): $(C_DIR)/traditional.c $(BUILD)/c/gfx.o | $(BUILD)/c
 	$(CC) $(CFLAGS) $^ -o $@ $(LDLIBS)
 
-# C++ example: compiled/linked with the C++ compiler; it consumes the
-# C-compiled gfx.o (linkage works because gfx.h is extern "C").
-$(CPP_BIN): examples/callbacks.cpp $(BUILD)/gfx.o | $(BUILD)
+# --- C++ example: its own gfx.o, compiled and linked with the C++ compiler.
+#     Nothing here is shared with the C target above. ---
+$(BUILD)/cpp/gfx.o: $(CPP_DIR)/gfx.cpp $(CPP_DIR)/gfx.hpp | $(BUILD)/cpp
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(CPP_BIN): $(CPP_DIR)/callbacks.cpp $(BUILD)/cpp/gfx.o | $(BUILD)/cpp
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 
 run-c: check-sdl $(C_BIN)
@@ -91,12 +104,12 @@ smoke: all
 # Force a fresh debug build (compiler flags aren't tracked by make, so we
 # remove the artifacts first), then drop into lldb — the macOS debugger.
 debug-c: check-sdl
-	rm -f $(C_BIN) $(BUILD)/gfx.o
+	rm -f $(C_BIN) $(BUILD)/c/gfx.o
 	$(MAKE) DEBUG=1 $(C_BIN)
 	lldb ./$(C_BIN)
 
 debug-cpp: check-sdl
-	rm -f $(CPP_BIN) $(BUILD)/gfx.o
+	rm -f $(CPP_BIN) $(BUILD)/cpp/gfx.o
 	$(MAKE) DEBUG=1 $(CPP_BIN)
 	lldb ./$(CPP_BIN)
 

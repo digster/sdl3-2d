@@ -8,8 +8,10 @@
  *       loop: pump events -> update (with dt) -> clear -> draw -> present
  *     teardown
  *
- * The companion example examples/callbacks.cpp does the exact same thing using
- * SDL3's newer SDL_AppInit/Iterate/Event/Quit model in C++ — compare the two.
+ * The companion example examples/cpp/callbacks.cpp does the exact same thing
+ * using SDL3's newer SDL_AppInit/Iterate/Event/Quit model in C++ — compare the
+ * two. The two examples are fully independent: each has its own copy of the
+ * gfx draw helpers and shares no source with the other.
  *
  * Run `./demo_traditional` for an interactive window, or
  * `./demo_traditional --frames 120` to render 120 frames and exit (used by

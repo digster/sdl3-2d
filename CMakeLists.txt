@@ -8,12 +8,14 @@
 #   cmake --build build
 #   ./build/demo_traditional      ./build/demo_callbacks
 #
-# Produces the same two binaries as `make`.
+# The two demos are FULLY INDEPENDENT: each executable is built only from its
+# own folder (examples/c or examples/cpp), with that folder on its private
+# include path. There is no shared gfx library and no cross-linking.
 
 cmake_minimum_required(VERSION 3.16)
 
-# Declaring BOTH C and CXX is what lets one project compile gfx.c as C while
-# building the C++ example with the C++ compiler.
+# C for the C example, CXX for the C++ example — two separate languages, two
+# separate targets, nothing linked across the boundary.
 project(sdl3_2d LANGUAGES C CXX)
 
 set(CMAKE_C_STANDARD 11)
@@ -29,21 +31,21 @@ endif()
 # CONFIG mode = use SDL3's installed SDL3Config.cmake (from `brew install sdl3`).
 find_package(SDL3 REQUIRED CONFIG)
 
-# Shared draw-helper library, built from the C source.
-add_library(gfx STATIC src/gfx.c)
-target_include_directories(gfx PUBLIC include)
-# PUBLIC so anything linking gfx also gets SDL3's include path/flags.
-target_link_libraries(gfx PUBLIC SDL3::SDL3)
-target_compile_options(gfx PRIVATE -Wall -Wextra)
-
-# C example — traditional hand-written loop.
-add_executable(demo_traditional examples/traditional.c)
-target_link_libraries(demo_traditional PRIVATE gfx SDL3::SDL3)
+# --- C example — traditional hand-written loop. Compiles its own gfx.c. ---
+add_executable(demo_traditional
+    examples/c/traditional.c
+    examples/c/gfx.c)
+target_include_directories(demo_traditional PRIVATE examples/c)
+target_link_libraries(demo_traditional PRIVATE SDL3::SDL3)
 target_compile_options(demo_traditional PRIVATE -Wall -Wextra)
 
-# C++ example — SDL3 callback model. Linking SDL3::SDL3 also wires up the
-# SDL_main entry-point shim, which on macOS is what satisfies Cocoa's
-# requirement to start from its own main without you touching NSApplication.
-add_executable(demo_callbacks examples/callbacks.cpp)
-target_link_libraries(demo_callbacks PRIVATE gfx SDL3::SDL3)
+# --- C++ example — SDL3 callback model. Compiles its own gfx.cpp. Linking
+#     SDL3::SDL3 also wires up the SDL_main entry-point shim, which on macOS is
+#     what satisfies Cocoa's requirement to start from its own main without you
+#     touching NSApplication. ---
+add_executable(demo_callbacks
+    examples/cpp/callbacks.cpp
+    examples/cpp/gfx.cpp)
+target_include_directories(demo_callbacks PRIVATE examples/cpp)
+target_link_libraries(demo_callbacks PRIVATE SDL3::SDL3)
 target_compile_options(demo_callbacks PRIVATE -Wall -Wextra)

@@ -1,8 +1,8 @@
 /*
  * callbacks.cpp — SDL3 starter using the callback app model, in C++.
  *
- * Same window/input/drawing as examples/traditional.c, but instead of writing
- * our own main() + while-loop we hand control to SDL: define
+ * Same window/input/drawing as examples/c/traditional.c, but instead of
+ * writing our own main() + while-loop we hand control to SDL: define
  * SDL_MAIN_USE_CALLBACKS and implement four functions. SDL calls them:
  *
  *     SDL_AppInit     once, at startup
@@ -17,20 +17,23 @@
  * Per-app state lives in a heap C++ object whose pointer SDL stores for us and
  * passes back into every callback (the `appstate` parameter) — no globals.
  *
+ * This example is fully independent from the C one: it uses its own idiomatic
+ * C++ draw helpers (gfx.hpp / gfx.cpp) and shares no source with examples/c/.
+ *
  * Run `./demo_callbacks` for a window, or `./demo_callbacks --frames 120`
  * to render 120 frames then exit (used by `make smoke`).
  */
 #define SDL_MAIN_USE_CALLBACKS 1
 #include <SDL3/SDL.h>
-#include <SDL3/SDL_main.h>     /* provides the real entry point (also on macOS) */
-#include "gfx.h"               /* plain-C API; usable here thanks to extern "C" */
+#include <SDL3/SDL_main.h>     // provides the real entry point (also on macOS)
+#include "gfx.hpp"             // this example's own idiomatic C++ draw helpers
 
 #include <vector>
-#include <cstring>             /* std::strcmp */
-#include <cstdlib>             /* std::atol   */
+#include <cstring>             // std::strcmp
+#include <cstdlib>             // std::atol
 
 /* A tiny C++ value type — we keep a std::vector of these to show a C++
- * container driving the C drawing API. */
+ * container driving the drawing API. */
 struct ColoredDot {
     float x, y, r;
     Uint8 cr, cg, cb;
@@ -42,10 +45,10 @@ struct AppState {
     SDL_Window   *window   = nullptr;
     SDL_Renderer *renderer = nullptr;
     Uint64 prev_ns = 0;
-    long   max_frames = -1;       /* -1 = run until quit; set by --frames */
+    long   max_frames = -1;       // -1 = run until quit; set by --frames
     long   frame      = 0;
     float  ball_x = 140.0f, ball_y = 180.0f;
-    float  ball_vx = 210.0f, ball_vy = 240.0f;  /* px/sec */
+    float  ball_vx = 210.0f, ball_vy = 240.0f;  // px/sec
     float  ball_r = 26.0f;
     std::vector<ColoredDot> dots;
 };
@@ -56,12 +59,12 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
     SDL_SetAppMetadata("SDL3 2D - callbacks (C++)", "1.0",
                        "com.example.sdl3_2d");
 
-    if (!SDL_Init(SDL_INIT_VIDEO)) {            /* SDL3: true == success */
+    if (!SDL_Init(SDL_INIT_VIDEO)) {            // SDL3: true == success
         SDL_Log("SDL_Init failed: %s", SDL_GetError());
         return SDL_APP_FAILURE;
     }
 
-    AppState *st = new AppState();              /* C++ object behind appstate */
+    AppState *st = new AppState();              // C++ object behind appstate
 
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--frames") == 0 && i + 1 < argc) {
@@ -76,29 +79,30 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
         delete st;
         return SDL_APP_FAILURE;
     }
-    SDL_SetRenderVSync(st->renderer, 1);        /* pace to display refresh */
+    SDL_SetRenderVSync(st->renderer, 1);        // pace to display refresh
 
     /* A little real C++: build a row of dots in a std::vector. They get fed
-     * into the C gfx_* API every frame in SDL_AppIterate. */
+     * into the gfx:: API every frame in SDL_AppIterate. */
     for (int i = 0; i < 8; ++i) {
         st->dots.push_back(ColoredDot{
-            60.0f + (float)i * 28.0f, 60.0f, 10.0f,
-            (Uint8)(40 + i * 26), (Uint8)180, (Uint8)(255 - i * 20)
+            60.0f + static_cast<float>(i) * 28.0f, 60.0f, 10.0f,
+            static_cast<Uint8>(40 + i * 26), static_cast<Uint8>(180),
+            static_cast<Uint8>(255 - i * 20)
         });
     }
 
     st->prev_ns = SDL_GetTicksNS();
-    *appstate = st;                             /* SDL hands this back to us */
+    *appstate = st;                             // SDL hands this back to us
     return SDL_APP_CONTINUE;
 }
 
 SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *e)
 {
-    (void)appstate;                             /* unused in this callback */
+    (void)appstate;                             // unused in this callback
 
     switch (e->type) {
-    case SDL_EVENT_QUIT:                        /* window close button */
-        return SDL_APP_SUCCESS;                 /* stop, success */
+    case SDL_EVENT_QUIT:                        // window close button
+        return SDL_APP_SUCCESS;                 // stop, success
     case SDL_EVENT_KEY_DOWN:
         SDL_Log("key down: scancode=%d", (int)e->key.scancode);
         if (e->key.scancode == SDL_SCANCODE_ESCAPE) {
@@ -116,7 +120,7 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *e)
     default:
         break;
     }
-    return SDL_APP_CONTINUE;                    /* keep running */
+    return SDL_APP_CONTINUE;                    // keep running
 }
 
 SDL_AppResult SDL_AppIterate(void *appstate)
@@ -140,37 +144,37 @@ SDL_AppResult SDL_AppIterate(void *appstate)
     if (st->ball_y + st->ball_r > (float)win_h) { st->ball_y = (float)win_h - st->ball_r;  st->ball_vy = -st->ball_vy; }
 
     /* clear -> draw -> present */
-    gfx_clear(st->renderer, 18, 18, 24);
+    gfx::clear(st->renderer, 18, 18, 24);
 
-    /* C++ std::vector feeding the C drawing API. */
+    /* C++ std::vector feeding the drawing API. */
     for (const ColoredDot &d : st->dots) {
-        gfx_set_color(st->renderer, d.cr, d.cg, d.cb, 255);
-        gfx_fill_circle(st->renderer, d.x, d.y, d.r);
+        gfx::set_color(st->renderer, d.cr, d.cg, d.cb, 255);
+        gfx::fill_circle(st->renderer, d.x, d.y, d.r);
     }
 
-    gfx_set_color(st->renderer, 80, 200, 255, 255);
-    gfx_line(st->renderer, 280, 50, 460, 110);
+    gfx::set_color(st->renderer, 80, 200, 255, 255);
+    gfx::line(st->renderer, 280, 50, 460, 110);
 
-    gfx_set_color(st->renderer, 255, 200, 60, 255);
-    gfx_rect(st->renderer, 500, 40, 120, 80);
+    gfx::set_color(st->renderer, 255, 200, 60, 255);
+    gfx::rect(st->renderer, 500, 40, 120, 80);
 
-    gfx_set_color(st->renderer, 60, 200, 120, 255);
-    gfx_fill_rect(st->renderer, 650, 40, 110, 80);
+    gfx::set_color(st->renderer, 60, 200, 120, 255);
+    gfx::fill_rect(st->renderer, 650, 40, 110, 80);
 
-    gfx_set_color(st->renderer, 255, 120, 200, 255);
-    gfx_circle(st->renderer, 130, 270, 55);
+    gfx::set_color(st->renderer, 255, 120, 200, 255);
+    gfx::circle(st->renderer, 130, 270, 55);
 
-    gfx_set_color(st->renderer, 120, 160, 255, 255);
-    gfx_fill_circle(st->renderer, 320, 270, 55);
+    gfx::set_color(st->renderer, 120, 160, 255, 255);
+    gfx::fill_circle(st->renderer, 320, 270, 55);
 
-    gfx_set_color(st->renderer, 255, 240, 120, 255);
-    gfx_triangle(st->renderer, 470, 330, 550, 200, 630, 330);
+    gfx::set_color(st->renderer, 255, 240, 120, 255);
+    gfx::triangle(st->renderer, 470, 330, 550, 200, 630, 330);
 
-    gfx_set_color(st->renderer, 255, 110, 90, 255);
-    gfx_fill_triangle(st->renderer, 660, 330, 720, 200, 780, 330);
+    gfx::set_color(st->renderer, 255, 110, 90, 255);
+    gfx::fill_triangle(st->renderer, 660, 330, 720, 200, 780, 330);
 
-    gfx_set_color(st->renderer, 255, 255, 255, 255);
-    gfx_fill_circle(st->renderer, st->ball_x, st->ball_y, st->ball_r);
+    gfx::set_color(st->renderer, 255, 255, 255, 255);
+    gfx::fill_circle(st->renderer, st->ball_x, st->ball_y, st->ball_r);
 
     SDL_RenderPresent(st->renderer);
 

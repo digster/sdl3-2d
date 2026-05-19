@@ -1,0 +1,165 @@
+/*
+ * gfx.cpp — implementation of the gfx.hpp drawing helpers (C++).
+ *
+ * This is the C++ example's own, self-contained copy of the draw helpers. It
+ * is compiled as C++ (see the top-level Makefile / CMakeLists.txt) and linked
+ * only into the C++ demo. The C example has a separate implementation in
+ * examples/c/gfx.c — nothing is shared between the two.
+ *
+ * Every routine assumes the caller has already chosen a colour via
+ * gfx::set_color() (or gfx::clear()); nothing here changes the colour except
+ * the two functions whose explicit job is to set it.
+ */
+#include "gfx.hpp"
+
+#include <cmath>   // std::sqrt — used by the filled-circle scanline math
+
+namespace gfx {
+
+void clear(SDL_Renderer *renderer, Uint8 r, Uint8 g, Uint8 b)
+{
+    // Opaque clear. This also leaves the draw colour at (r,g,b,255), which is
+    // harmless because callers set their own colour before each shape.
+    SDL_SetRenderDrawColor(renderer, r, g, b, 255);
+    SDL_RenderClear(renderer);
+}
+
+void set_color(SDL_Renderer *renderer, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
+{
+    SDL_SetRenderDrawColor(renderer, r, g, b, a);
+}
+
+void point(SDL_Renderer *renderer, float x, float y)
+{
+    // SDL3 point/line primitives are float-based (SDL2 used ints).
+    SDL_RenderPoint(renderer, x, y);
+}
+
+void line(SDL_Renderer *renderer,
+          float x1, float y1, float x2, float y2)
+{
+    SDL_RenderLine(renderer, x1, y1, x2, y2);
+}
+
+void rect(SDL_Renderer *renderer, float x, float y, float w, float h)
+{
+    // SDL3 uses SDL_FRect (float) here; SDL2's SDL_Rect was integer-only.
+    SDL_FRect r{ x, y, w, h };
+    SDL_RenderRect(renderer, &r);             // outline only
+}
+
+void fill_rect(SDL_Renderer *renderer, float x, float y, float w, float h)
+{
+    SDL_FRect r{ x, y, w, h };
+    SDL_RenderFillRect(renderer, &r);         // solid fill
+}
+
+void circle(SDL_Renderer *renderer, float cx, float cy, float radius)
+{
+    if (radius <= 0.0f) {
+        return;                               // nothing to draw
+    }
+
+    /*
+     * Integer midpoint-circle (Bresenham) algorithm.
+     *
+     * We only ever compute one octant. The circle has 8-way symmetry, so each
+     * computed (x, y) is mirrored into the other seven octants. `d` is the
+     * decision variable: its sign tells us whether the next pixel steps
+     * straight down (y++) or also inward (x--), using only integer adds — no
+     * trig, no sqrt in the loop.
+     */
+    int x = static_cast<int>(radius);
+    int y = 0;
+    int d = 1 - x;
+
+    while (x >= y) {
+        // 8 mirrored points of the current (x, y) about the centre.
+        SDL_RenderPoint(renderer, cx + static_cast<float>(x), cy + static_cast<float>(y));
+        SDL_RenderPoint(renderer, cx - static_cast<float>(x), cy + static_cast<float>(y));
+        SDL_RenderPoint(renderer, cx + static_cast<float>(x), cy - static_cast<float>(y));
+        SDL_RenderPoint(renderer, cx - static_cast<float>(x), cy - static_cast<float>(y));
+        SDL_RenderPoint(renderer, cx + static_cast<float>(y), cy + static_cast<float>(x));
+        SDL_RenderPoint(renderer, cx - static_cast<float>(y), cy + static_cast<float>(x));
+        SDL_RenderPoint(renderer, cx + static_cast<float>(y), cy - static_cast<float>(x));
+        SDL_RenderPoint(renderer, cx - static_cast<float>(y), cy - static_cast<float>(x));
+
+        y++;
+        if (d <= 0) {
+            d += 2 * y + 1;                   // step straight: y++ only
+        } else {
+            x--;
+            d += 2 * (y - x) + 1;             // step diagonally: y++, x--
+        }
+    }
+}
+
+void fill_circle(SDL_Renderer *renderer, float cx, float cy, float radius)
+{
+    if (radius <= 0.0f) {
+        return;
+    }
+
+    /*
+     * Scanline fill. For every row offset `dy` from the centre, the circle
+     * equation x^2 + y^2 = r^2 gives the horizontal half-width at that row as
+     * sqrt(r^2 - dy^2). Drawing one horizontal line per row fills the whole
+     * disc, needs no extra SDL features, and honours the current colour/alpha
+     * exactly (SDL_RenderGeometry would require 0..1 float colours instead).
+     */
+    int r = static_cast<int>(radius);
+    for (int dy = -r; dy <= r; ++dy) {
+        float half_w = std::sqrt(static_cast<float>(r * r - dy * dy));
+        SDL_RenderLine(renderer,
+                       cx - half_w, cy + static_cast<float>(dy),
+                       cx + half_w, cy + static_cast<float>(dy));
+    }
+}
+
+void triangle(SDL_Renderer *renderer,
+              float x1, float y1,
+              float x2, float y2,
+              float x3, float y3)
+{
+    // Outline = the three edges drawn as line segments.
+    SDL_RenderLine(renderer, x1, y1, x2, y2);
+    SDL_RenderLine(renderer, x2, y2, x3, y3);
+    SDL_RenderLine(renderer, x3, y3, x1, y1);
+}
+
+void fill_triangle(SDL_Renderer *renderer,
+                    float x1, float y1,
+                    float x2, float y2,
+                    float x3, float y3)
+{
+    /*
+     * SDL_RenderGeometry rasterises arbitrary triangles, but its SDL_Vertex
+     * stores colour as an SDL_FColor in the 0..1 range — NOT the 0..255 Uint8
+     * range used by SDL_SetRenderDrawColor. To keep this helper consistent
+     * with the rest of the API ("set colour, then draw"), we read the current
+     * draw colour back and rescale it to 0..1 here.
+     */
+    Uint8 r, g, b, a;
+    SDL_GetRenderDrawColor(renderer, &r, &g, &b, &a);
+
+    SDL_FColor col;
+    col.r = static_cast<float>(r) / 255.0f;
+    col.g = static_cast<float>(g) / 255.0f;
+    col.b = static_cast<float>(b) / 255.0f;
+    col.a = static_cast<float>(a) / 255.0f;
+
+    // tex_coord is unused (no texture), so it can be left at 0.
+    SDL_Vertex verts[3];
+    verts[0].position = SDL_FPoint{ x1, y1 };
+    verts[1].position = SDL_FPoint{ x2, y2 };
+    verts[2].position = SDL_FPoint{ x3, y3 };
+    for (auto &v : verts) {
+        v.color = col;
+        v.tex_coord = SDL_FPoint{ 0.0f, 0.0f };
+    }
+
+    // texture = nullptr (solid colour), no index buffer (vertices in order).
+    SDL_RenderGeometry(renderer, nullptr, verts, 3, nullptr, 0);
+}
+
+}  // namespace gfx
