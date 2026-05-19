@@ -17,6 +17,8 @@ cmake_install.cmake
 *.dSYM/
 .lldbinit
 compile_commands.json
+# clangd's background symbol index — regenerated on demand
+.cache/
 
 # macOS
 .DS_Store
