@@ -7,6 +7,7 @@ build/
 *.dylib
 demo_traditional
 demo_callbacks
+demo_gpu
 
 # CMake artifacts (if configured outside build/)
 CMakeCache.txt

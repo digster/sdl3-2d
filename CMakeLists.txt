@@ -56,3 +56,14 @@ add_executable(demo_callbacks
 target_include_directories(demo_callbacks PRIVATE examples/cpp)
 target_link_libraries(demo_callbacks PRIVATE SDL3::SDL3)
 target_compile_options(demo_callbacks PRIVATE -Wall -Wextra)
+
+# --- C++ SDL_GPU example — a basic graphics pipeline (the "hello triangle")
+#     on SDL3's GPU API, which abstracts Metal/Vulkan/D3D12. Single self-
+#     contained translation unit: shaders are embedded MSL strings, so there
+#     is no gfx and nothing shared with the other examples. Its own private
+#     include path keeps the cpp-gpu folder isolated from cpp. ---
+add_executable(demo_gpu
+    examples/cpp-gpu/triangle.cpp)
+target_include_directories(demo_gpu PRIVATE examples/cpp-gpu)
+target_link_libraries(demo_gpu PRIVATE SDL3::SDL3)
+target_compile_options(demo_gpu PRIVATE -Wall -Wextra)

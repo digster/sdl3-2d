@@ -54,3 +54,22 @@ Decisions reached:
 - "Not sure" which extension → configure both (clangd default with the
   Microsoft engine disabled; `c_cpp_properties.json` as the documented
   fallback), commit `.vscode/` so the template is correct on clone.
+
+## 2026-05-19 — Add a C++ SDL_GPU graphics-pipeline example
+
+- Add a C++ example demonstrating a basic SDL3 graphics pipeline which
+  abstracts the underlying GPU
+- Add it as a separate C++ example
+- It should be well commented
+
+Decisions reached during planning:
+
+- It is the SDL_GPU "hello triangle": create device → compile shaders → build
+  graphics pipeline → per-frame command buffer / render pass / swapchain.
+- Shaders are embedded MSL strings (Metal backend compiles at runtime) so the
+  template keeps its "just `brew install sdl3`, no toolchain" promise.
+- SDL callback loop (consistent with `examples/cpp/callbacks.cpp`); minimal
+  static triangle with vertices baked into the vertex shader (no vertex/
+  transfer buffers) — tightest focus on the pipeline itself.
+- New `examples/cpp-gpu/` folder, single self-contained `triangle.cpp`, its
+  own build target/object tree; shares no source and does not use `gfx`.
