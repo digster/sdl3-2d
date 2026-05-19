@@ -1,0 +1,21 @@
+{
+  // Only consulted if you switch to the Microsoft C/C++ extension (set
+  // "C_Cpp.intelliSenseEngine": "default" in settings.json). It points that
+  // engine at the SAME compilation database clangd uses, so SDL3 resolves
+  // identically. The includePath/standard entries below are a static fallback
+  // used only before `make compdb` has generated the database.
+  "version": 4,
+  "configurations": [
+    {
+      "name": "Mac",
+      "compileCommands": "${workspaceFolder}/compile_commands.json",
+      "compilerPath": "/usr/bin/clang",
+      "cStandard": "c11",
+      "cppStandard": "c++17",
+      "includePath": [
+        "${workspaceFolder}/examples/**",
+        "/opt/homebrew/include"
+      ]
+    }
+  ]
+}

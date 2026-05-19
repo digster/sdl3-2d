@@ -44,6 +44,7 @@ make run-cpp    # build + run the C++ / callbacks demo
 make smoke      # build both, run each headless-ish for 120 frames, exit
 make debug-c    # rebuild C demo with -g -O0 and open lldb
 make debug-cpp  # rebuild C++ demo with -g -O0 and open lldb
+make compdb     # (re)generate compile_commands.json for editor IntelliSense
 make clean      # remove build/
 ```
 
@@ -64,6 +65,34 @@ cmake --build build
 ./build/demo_traditional
 ./build/demo_callbacks
 ```
+
+## Editor / IDE setup (IntelliSense)
+
+The build works without this — it only fixes the editor. SDL3's flags reach
+the compiler at build time (`pkg-config`), but a language server parses each
+file with no flags, can't find `<SDL3/SDL.h>`, and floods the file with
+phantom *"unknown type `SDL_Renderer`"* errors. The fix is a compilation
+database that hands the editor the real per-file flags:
+
+```sh
+make compdb     # writes build/cmake/compile_commands.json, symlinks it to root
+```
+
+Then reload VS Code (or run *"clangd: Restart language server"*). Re-run
+`make compdb` after `make clean` (it wipes `build/`).
+
+- **clangd (recommended, default config):** `.vscode/` ships pre-wired —
+  install the [clangd extension](https://marketplace.visualstudio.com/items?itemName=llvm-vs-code-extensions.vscode-clangd)
+  and it auto-discovers the database. The Microsoft C/C++ IntelliSense engine
+  is disabled in `.vscode/settings.json` so the two language servers don't
+  emit duplicate squiggles.
+- **Prefer the Microsoft C/C++ extension?** Set
+  `"C_Cpp.intelliSenseEngine": "default"` in `.vscode/settings.json` and
+  disable the clangd extension — `.vscode/c_cpp_properties.json` already
+  points it at the same `compile_commands.json`.
+- **No CMake / zero-build option:** rename `.clangd.old` → `.clangd`. It
+  statically adds the Homebrew SDL3 include path (edit it for Intel/`/usr/local`
+  or a custom prefix). No `make compdb` needed.
 
 ## The drawing API
 

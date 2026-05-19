@@ -19,6 +19,7 @@
 #   make smoke       build both, run each with --frames 120 (non-interactive)
 #   make debug-c     rebuild the C demo with -g -O0, launch lldb
 #   make debug-cpp   rebuild the C++ demo with -g -O0, launch lldb
+#   make compdb      (re)generate compile_commands.json for editors (clangd)
 #   make clean       remove build/
 #
 #   make DEBUG=1 <target>   force -g -O0 instead of -O2
@@ -59,7 +60,7 @@ BUILD   := build
 C_BIN   := $(BUILD)/demo_traditional
 CPP_BIN := $(BUILD)/demo_callbacks
 
-.PHONY: all run-c run-cpp smoke debug-c debug-cpp clean check-sdl
+.PHONY: all run-c run-cpp smoke debug-c debug-cpp compdb clean check-sdl
 
 all: check-sdl $(C_BIN) $(CPP_BIN)
 
@@ -113,5 +114,16 @@ debug-cpp: check-sdl
 	$(MAKE) DEBUG=1 $(CPP_BIN)
 	lldb ./$(CPP_BIN)
 
+# Editor IntelliSense (clangd / VS Code C/C++) needs a compilation database
+# to know SDL3's include path and the per-file flags. CMake emits one when
+# configured; we drop it in a dedicated subdir so it never collides with the
+# Makefile's object trees, then symlink it to the repo root where clangd
+# auto-discovers it. Re-run after `make clean` (which wipes build/).
+compdb: check-sdl
+	cmake -S . -B $(BUILD)/cmake >/dev/null
+	ln -sf $(BUILD)/cmake/compile_commands.json compile_commands.json
+	@echo "compile_commands.json ready - reload VS Code (or run: clangd: Restart language server)."
+
 clean:
 	rm -rf $(BUILD)
+	rm -f compile_commands.json

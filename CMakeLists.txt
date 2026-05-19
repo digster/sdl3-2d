@@ -18,6 +18,13 @@ cmake_minimum_required(VERSION 3.16)
 # separate targets, nothing linked across the boundary.
 project(sdl3_2d LANGUAGES C CXX)
 
+# Emit build/<dir>/compile_commands.json so editor language servers (clangd,
+# VS Code C/C++) parse files with the SAME SDL3 include paths and flags the
+# real build uses. Without this the editor parses each file with no flags,
+# can't find <SDL3/SDL.h>, and floods the file with phantom "unknown type"
+# errors even though the build itself is fine.
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_STANDARD 17)

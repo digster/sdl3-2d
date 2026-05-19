@@ -38,3 +38,19 @@ Decisions reached (the previous shared-object design is replaced, not kept):
   **replaced**; ~135 lines of gfx are duplicated on purpose so either folder
   is copy-paste independent. ARCHITECTURE.md / README.md rewritten to teach
   the new "two standalone starters" story.
+
+## 2026-05-19 — Fix SDL3 red squiggles / phantom errors in VS Code
+
+- In VS Code on my mac, for anything SDL related, I keep seeing red lines and
+  errors (everything runs fine, only an issue in the editor). How do I solve
+  it? (Screenshot: `Unknown type name 'SDL_Renderer' clang(unknown_typename)`.)
+
+Decisions reached:
+
+- Root cause: the editor's clangd parses files with no flags, so
+  `<SDL3/SDL.h>` doesn't resolve. Build is unaffected.
+- Fix via a CMake-generated `compile_commands.json` (primary), plus ship a
+  static `.clangd.old` zero-build fallback (renamed by hand if wanted).
+- "Not sure" which extension → configure both (clangd default with the
+  Microsoft engine disabled; `c_cpp_properties.json` as the documented
+  fallback), commit `.vscode/` so the template is correct on clone.

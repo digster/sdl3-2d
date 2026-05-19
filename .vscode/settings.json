@@ -1,0 +1,20 @@
+{
+  // --- Default: use clangd as the single C/C++ language server ----------------
+  // clangd reads the compilation database at the workspace root (a symlink to
+  // build/cmake/compile_commands.json created by `make compdb`). That database
+  // carries the exact SDL3 include path and per-file flags, so SDL3 types
+  // resolve and the phantom "unknown type" errors disappear.
+  "clangd.arguments": [
+    "--compile-commands-dir=${workspaceFolder}",
+    "--header-insertion=never"
+  ],
+
+  // Two language servers (clangd + the Microsoft C/C++ engine) analysing the
+  // same files produce DUPLICATE squiggles. We disable the Microsoft engine so
+  // clangd owns IntelliSense.
+  //
+  // Prefer the Microsoft C/C++ extension instead? Flip this to "default" and
+  // uninstall/disable the clangd extension — c_cpp_properties.json already
+  // points the Microsoft engine at the same compile_commands.json.
+  "C_Cpp.intelliSenseEngine": "disabled"
+}

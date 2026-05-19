@@ -85,6 +85,19 @@ human closing windows — useful for CI later. Proving independence directly:
 `cd examples/c && clang -I. *.c $(pkg-config --cflags --libs sdl3)` builds the
 C demo with the C++ folder literally invisible (and vice versa).
 
+**Editor IntelliSense is a third, read-only consumer of the build, not part
+of it.** A language server parses files with no flags and so can't resolve
+`<SDL3/SDL.h>`. `make compdb` reuses the CMake path purely to emit a
+`compile_commands.json` (CMake's `CMAKE_EXPORT_COMPILE_COMMANDS`) into
+`build/cmake/`, symlinked to the repo root where clangd auto-discovers it —
+each file then gets the *same* per-folder include path the build uses, so the
+C/C++ isolation holds in the editor too. It is configured into its own
+`build/cmake/` subdir specifically so it never collides with the Makefile's
+`build/c` and `build/cpp` object trees. `.vscode/` (clangd default, Microsoft
+C/C++ fallback) and a static `.clangd.old` zero-build fallback are committed
+so the template is correct on clone; the generated DB itself is git-ignored
+(machine-specific absolute paths).
+
 ## Project-specific conventions
 
 - **Coordinates are `float` everywhere.** SDL3's 2D API is float-native;

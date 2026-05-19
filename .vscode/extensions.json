@@ -1,0 +1,8 @@
+{
+  // clangd gives this project the most accurate C/C++ IntelliSense because it
+  // reads compile_commands.json directly (see .vscode/settings.json). Install
+  // it with: make compdb  then reload the window.
+  "recommendations": [
+    "llvm-vs-code-extensions.vscode-clangd"
+  ]
+}

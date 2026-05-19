@@ -1,0 +1,12 @@
+# Zero-build fallback for clangd. INACTIVE while named ".clangd.old"
+# (clangd only reads a file named exactly ".clangd").
+#
+# Use this if you do NOT want to run `make compdb` / generate a
+# compile_commands.json:  rename this file to ".clangd".
+#
+# Quoted local includes ("gfx.hpp" / "gfx.h") resolve relative to the source
+# file automatically, so the only flag clangd is missing is where SDL3 lives.
+# This path is the Homebrew (Apple Silicon) location; change it for Intel
+# (/usr/local/include) or a custom prefix.
+CompileFlags:
+  Add: [-I/opt/homebrew/include]
