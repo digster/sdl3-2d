@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>10 · Tilemap Rendering — 2D Track — SDL3 Recipes</title>
+    <link rel="stylesheet" href="../style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+</head>
+<body>
+
+<nav class="topnav">
+    <a href="../index.html">SDL3 Recipes</a> ›
+    <a href="index.html">2D Track</a> ›
+    <span>10. Tilemap Rendering</span>
+</nav>
+
+<main>
+
+<header class="recipe-header">
+    <span class="badge badge-advanced">Advanced</span>
+    <h1>Recipe 10 — Tilemap Rendering</h1>
+    <p class="tagline">
+        A 2D grid + a tileset = a level. With a scrolling camera, viewport
+        culling, and one <code>SDL_RenderTexture</code> per visible tile.
+    </p>
+</header>
+
+<section>
+    <h2>What you'll learn</h2>
+    <ul>
+        <li>Storing a level as a flat <code>std::vector&lt;int&gt;</code> indexing into a tileset.</li>
+        <li>Mapping (tile column, tile row) → screen position with a camera offset.</li>
+        <li>Viewport culling — only iterating tiles you can actually see.</li>
+        <li>Why two tiles per "kind" sometimes outperforms one big texture lookup.</li>
+    </ul>
+</section>
+
+<section>
+    <h2>Prerequisites</h2>
+    <p><a href="05-loading-textures.html">Recipe 05 — Loading Textures</a> and <a href="04-delta-time.html">Recipe 04</a> for camera motion.</p>
+</section>
+
+<section>
+    <h2>Walkthrough</h2>
+
+    <h3>The data layout</h3>
+    <p>
+        A tilemap is a 2D grid of small integers. <code>0</code> typically means
+        "empty", and other values index into a tileset texture (a sprite sheet
+        from recipe 06). Keeping the grid as a flat <code>std::vector</code> —
+        not a vector-of-vectors — is faster and lays out cache-friendly:
+    </p>
+<pre><code class="language-cpp">struct Tilemap {
+    int cols, rows;
+    std::vector&lt;int&gt; tiles;          // size = cols * rows; tiles[y*cols + x]
+};
+</code></pre>
+
+    <h3>From map to screen</h3>
+    <p>
+        Tile (<code>tx</code>, <code>ty</code>) at tile size <code>TS</code>,
+        with the camera at <code>(cam_x, cam_y)</code>:
+    </p>
+<pre><code class="language-cpp">float screen_x = tx * TS - cam_x;
+float screen_y = ty * TS - cam_y;
+</code></pre>
+    <p>
+        And which tile is under a screen pixel <code>(sx, sy)</code>?
+    </p>
+<pre><code class="language-cpp">int tx = (int)((sx + cam_x) / TS);
+int ty = (int)((sy + cam_y) / TS);
+</code></pre>
+
+    <h3>Viewport culling</h3>
+    <p>
+        Drawing all 10,000 tiles in a level when only 200 fit on screen is
+        wasteful. Compute the visible tile rectangle once, then iterate only
+        that:
+    </p>
+<pre><code class="language-cpp">int tx0 = std::max(0,                (int)(cam_x / TS));
+int ty0 = std::max(0,                (int)(cam_y / TS));
+int tx1 = std::min(map.cols,         (int)((cam_x + win_w) / TS) + 1);
+int ty1 = std::min(map.rows,         (int)((cam_y + win_h) / TS) + 1);
+
+for (int ty = ty0; ty &lt; ty1; ++ty)
+    for (int tx = tx0; tx &lt; tx1; ++tx) {
+        int id = map.tiles[ty * map.cols + tx];
+        if (id == 0) continue;                  // skip empty
+        draw_tile(renderer, tileset, id, tx*TS - cam_x, ty*TS - cam_y);
+    }
+</code></pre>
+
+    <div class="note">
+        <strong>Why a flat vector?</strong> Cache locality. The tiles you draw
+        are adjacent in memory, so the CPU prefetcher catches up. A
+        <code>std::vector&lt;std::vector&lt;int&gt;&gt;</code> would scatter
+        each row across the heap and double the indirection.
+    </div>
+</section>
+
+<section>
+    <h2>Complete listing</h2>
+    <p>
+        Arrow keys / WASD scroll the camera over a procedurally-generated 60×40
+        map. Tileset is built in code — grass, stone, water — so no asset files.
+    </p>
+<pre><code class="language-cpp">/*
+ * 10-tilemap-rendering.cpp — scrollable tilemap with a procedural tileset.
+ */
+#define SDL_MAIN_USE_CALLBACKS 1
+#include &lt;SDL3/SDL.h&gt;
+#include &lt;SDL3/SDL_main.h&gt;
+#include "gfx.hpp"
+
+#include &lt;vector&gt;
+#include &lt;algorithm&gt;
+
+constexpr int TS    = 32;            // tile size in pixels
+constexpr int COLS  = 60;
+constexpr int ROWS  = 40;
+
+struct AppState {
+    SDL_Window   *window   = nullptr;
+    SDL_Renderer *renderer = nullptr;
+    SDL_Texture  *tileset  = nullptr;
+    std::vector&lt;int&gt; map;            // size = COLS * ROWS
+    float cam_x = 0, cam_y = 0;
+    Uint64 prev_ns = 0;
+};
+
+/* Build a 3-tile tileset (32x96): empty, grass, stone, water arranged vertically. */
+static SDL_Texture *make_tileset(SDL_Renderer *r)
+{
+    SDL_Surface *s = SDL_CreateSurface(TS, TS * 4, SDL_PIXELFORMAT_RGBA32);
+    if (!s) return nullptr;
+    Uint32 *px = static_cast&lt;Uint32 *&gt;(s-&gt;pixels);
+    const SDL_PixelFormatDetails *pfd = SDL_GetPixelFormatDetails(s-&gt;format);
+
+    auto fill = [&amp;](int tile, Uint8 r_, Uint8 g_, Uint8 b_) {
+        for (int y = 0; y &lt; TS; ++y)
+            for (int x = 0; x &lt; TS; ++x) {
+                // Subtle 1-pixel border so adjacent tiles read as a grid.
+                bool border = (x == 0) || (y == 0);
+                Uint8 v = border ? 30 : 0;
+                px[(tile * TS + y) * (s-&gt;pitch / 4) + x] =
+                    SDL_MapRGBA(pfd, nullptr,
+                                (Uint8)std::max(0, r_ - v),
+                                (Uint8)std::max(0, g_ - v),
+                                (Uint8)std::max(0, b_ - v),
+                                255);
+            }
+    };
+    // tile 0 stays transparent (we'll skip it in the loop anyway).
+    fill(1,  90, 160,  80);     // grass
+    fill(2, 130, 130, 140);     // stone
+    fill(3,  60, 110, 200);     // water
+
+    SDL_Texture *t = SDL_CreateTextureFromSurface(r, s);
+    SDL_DestroySurface(s);
+    SDL_SetTextureScaleMode(t, SDL_SCALEMODE_NEAREST);
+    return t;
+}
+
+/* Cheap "world" generator: grass everywhere with a stone ring and a water lake. */
+static void generate_map(std::vector&lt;int&gt; &amp;m)
+{
+    m.assign(COLS * ROWS, 1);
+    for (int y = 0; y &lt; ROWS; ++y)
+        for (int x = 0; x &lt; COLS; ++x) {
+            int dx = x - COLS / 2, dy = y - ROWS / 2;
+            int r2 = dx*dx + dy*dy;
+            if (r2 &gt; 14*14 &amp;&amp; r2 &lt; 18*18) m[y * COLS + x] = 2;  // stone ring
+            if (r2 &lt; 5*5)                  m[y * COLS + x] = 3;  // water lake
+        }
+}
+
+SDL_AppResult SDL_AppInit(void **appstate, int, char *[])
+{
+    SDL_SetAppMetadata("Tilemap", "1.0", "com.example.sdl3.tile");
+    if (!SDL_Init(SDL_INIT_VIDEO)) { SDL_Log("%s", SDL_GetError()); return SDL_APP_FAILURE; }
+    AppState *st = new AppState();
+    if (!SDL_CreateWindowAndRenderer("Tilemap", 800, 600,
+                                     SDL_WINDOW_RESIZABLE,
+                                     &amp;st-&gt;window, &amp;st-&gt;renderer)) {
+        SDL_Log("%s", SDL_GetError()); delete st; return SDL_APP_FAILURE;
+    }
+    SDL_SetRenderVSync(st-&gt;renderer, 1);
+    st-&gt;tileset = make_tileset(st-&gt;renderer);
+    generate_map(st-&gt;map);
+    st-&gt;prev_ns = SDL_GetTicksNS();
+    *appstate = st;
+    return SDL_APP_CONTINUE;
+}
+
+SDL_AppResult SDL_AppEvent(void *, SDL_Event *e)
+{
+    if (e-&gt;type == SDL_EVENT_QUIT) return SDL_APP_SUCCESS;
+    if (e-&gt;type == SDL_EVENT_KEY_DOWN &amp;&amp; e-&gt;key.scancode == SDL_SCANCODE_ESCAPE) return SDL_APP_SUCCESS;
+    return SDL_APP_CONTINUE;
+}
+
+SDL_AppResult SDL_AppIterate(void *appstate)
+{
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+
+    Uint64 now_ns = SDL_GetTicksNS();
+    float dt = std::min((now_ns - st-&gt;prev_ns) / 1.0e9f, 0.05f);
+    st-&gt;prev_ns = now_ns;
+
+    const bool *k = SDL_GetKeyboardState(nullptr);
+    const float v = 360.0f;
+    if (k[SDL_SCANCODE_A] || k[SDL_SCANCODE_LEFT])  st-&gt;cam_x -= v * dt;
+    if (k[SDL_SCANCODE_D] || k[SDL_SCANCODE_RIGHT]) st-&gt;cam_x += v * dt;
+    if (k[SDL_SCANCODE_W] || k[SDL_SCANCODE_UP])    st-&gt;cam_y -= v * dt;
+    if (k[SDL_SCANCODE_S] || k[SDL_SCANCODE_DOWN])  st-&gt;cam_y += v * dt;
+
+    // Clamp camera to map bounds.
+    int win_w = 0, win_h = 0;
+    SDL_GetWindowSize(st-&gt;window, &amp;win_w, &amp;win_h);
+    float max_cx = std::max(0.0f, (float)(COLS * TS - win_w));
+    float max_cy = std::max(0.0f, (float)(ROWS * TS - win_h));
+    st-&gt;cam_x = std::clamp(st-&gt;cam_x, 0.0f, max_cx);
+    st-&gt;cam_y = std::clamp(st-&gt;cam_y, 0.0f, max_cy);
+
+    gfx::clear(st-&gt;renderer, 12, 12, 16);
+
+    int tx0 = std::max(0,    (int)(st-&gt;cam_x / TS));
+    int ty0 = std::max(0,    (int)(st-&gt;cam_y / TS));
+    int tx1 = std::min(COLS, (int)((st-&gt;cam_x + win_w) / TS) + 1);
+    int ty1 = std::min(ROWS, (int)((st-&gt;cam_y + win_h) / TS) + 1);
+
+    for (int ty = ty0; ty &lt; ty1; ++ty) {
+        for (int tx = tx0; tx &lt; tx1; ++tx) {
+            int id = st-&gt;map[ty * COLS + tx];
+            if (id == 0) continue;
+            SDL_FRect src = { 0, (float)(id * TS), (float)TS, (float)TS };
+            SDL_FRect dst = { tx * (float)TS - st-&gt;cam_x,
+                              ty * (float)TS - st-&gt;cam_y,
+                              (float)TS, (float)TS };
+            SDL_RenderTexture(st-&gt;renderer, st-&gt;tileset, &amp;src, &amp;dst);
+        }
+    }
+
+    SDL_RenderPresent(st-&gt;renderer);
+    return SDL_APP_CONTINUE;
+}
+
+void SDL_AppQuit(void *appstate, SDL_AppResult)
+{
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+    if (st) {
+        if (st-&gt;tileset) SDL_DestroyTexture(st-&gt;tileset);
+        SDL_DestroyRenderer(st-&gt;renderer);
+        SDL_DestroyWindow(st-&gt;window);
+        delete st;
+    }
+}
+</code></pre>
+</section>
+
+<section>
+    <h2>Try it yourself</h2>
+    <ol>
+        <li>Print the tile count drawn each frame and toggle viewport culling off — observe the difference at the bigger map sizes.</li>
+        <li>Add a second tilemap layer (e.g. "decorations"): same grid size, drawn over the base with <code>0</code> meaning "no overlay."</li>
+        <li>Make the camera follow a "player" rectangle that moves with WASD — keep the player centred unless near the map edge.</li>
+        <li>Load a CSV-style map file at startup instead of generating one in code: each line is a comma-separated row of ints.</li>
+    </ol>
+</section>
+
+<nav class="footnav">
+    <a href="09-text-rendering.html">← 09. Text Rendering</a>
+    <a href="index.html">Index</a>
+    <a href="11-particle-systems.html">Next: Particle Systems →</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+    <a href="../index.html">SDL3 Recipes</a> · <a href="index.html">2D Track</a> · Recipe 10
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-cpp.min.js"></script>
+</body>
+</html>

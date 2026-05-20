@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>09 · Text Rendering — 2D Track — SDL3 Recipes</title>
+    <link rel="stylesheet" href="../style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+</head>
+<body>
+
+<nav class="topnav">
+    <a href="../index.html">SDL3 Recipes</a> ›
+    <a href="index.html">2D Track</a> ›
+    <span>09. Text Rendering</span>
+</nav>
+
+<main>
+
+<header class="recipe-header">
+    <span class="badge badge-intermediate">Intermediate</span>
+    <h1>Recipe 09 — Text Rendering</h1>
+    <p class="tagline">
+        Draw text without pulling in <code>SDL_ttf</code>. A 5×7 bitmap font in
+        code is all you need for HUDs, scores, debug labels.
+    </p>
+</header>
+
+<section>
+    <h2>What you'll learn</h2>
+    <ul>
+        <li>The bitmap-font idea: each character is a small grid of on/off pixels.</li>
+        <li>How to turn an ASCII letter into a rectangle of <code>gfx::point</code> calls.</li>
+        <li>Why this is "good enough" for HUDs and where <code>SDL_ttf</code> takes over.</li>
+    </ul>
+</section>
+
+<section>
+    <h2>Prerequisites</h2>
+    <p><a href="02-drawing-primitives.html">Recipe 02 — Drawing Primitives</a>.</p>
+</section>
+
+<section>
+    <h2>Walkthrough</h2>
+
+    <p>
+        SDL3 ships no text-drawing API; you either pull in
+        <a href="https://github.com/libsdl-org/SDL_ttf"><code>SDL_ttf</code></a>
+        for real font rendering, or you ship a bitmap font with the program. A
+        bitmap font is just an image (or a table in code) of glyphs at a fixed
+        cell size — for HUDs and debug overlays, it's plenty.
+    </p>
+
+    <h3>Encoding a glyph</h3>
+    <p>
+        Each character is a 5×7 grid; we encode it as 7 rows, each row a 5-bit
+        mask. Bit set = filled pixel. The capital letter <code>A</code>:
+    </p>
+<pre><code class="language-cpp">// Read bottom-up if you like, but I find top-down easier.
+// .XXX.        0b01110
+// X...X        0b10001
+// X...X        0b10001
+// XXXXX        0b11111   &lt;-- crossbar
+// X...X        0b10001
+// X...X        0b10001
+// X...X        0b10001
+static const Uint8 GLYPH_A[7] = { 0b01110, 0b10001, 0b10001, 0b11111,
+                                  0b10001, 0b10001, 0b10001 };
+</code></pre>
+
+    <p>
+        For a real font you'd encode every printable ASCII character; for this
+        recipe we'll ship just A–Z, 0–9, space, period, colon and dash so the
+        listing stays scannable.
+    </p>
+
+    <h3>Drawing one glyph</h3>
+<pre><code class="language-cpp">static void draw_glyph(SDL_Renderer *r, const Uint8 rows[7],
+                       float x, float y, float scale)
+{
+    for (int row = 0; row &lt; 7; ++row) {
+        for (int col = 0; col &lt; 5; ++col) {
+            if (rows[row] &amp; (1 &lt;&lt; (4 - col))) {     // MSB is left-most
+                gfx::fill_rect(r, x + col * scale, y + row * scale, scale, scale);
+            }
+        }
+    }
+}
+</code></pre>
+    <p>
+        Drawing each "on" pixel as a small filled rect means the same code
+        renders crisply at any integer scale — a built-in zoom.
+    </p>
+
+    <h3>A string</h3>
+<pre><code class="language-cpp">static void draw_text(SDL_Renderer *r, const char *s,
+                      float x, float y, float scale)
+{
+    while (*s) {
+        const Uint8 *g = glyph_for(*s);          // returns nullptr for unknown chars
+        if (g) draw_glyph(r, g, x, y, scale);
+        x += 6.0f * scale;                       // 5px glyph + 1px gap
+        ++s;
+    }
+}
+</code></pre>
+
+    <div class="note">
+        <strong>When to upgrade.</strong> Bitmap fonts max out around debug
+        overlays / arcade-style HUDs. The moment you want kerning, variable
+        size, or non-Latin scripts, switch to <code>SDL_ttf</code>: it loads a
+        TTF, asks FreeType to rasterise glyphs into a surface, and you upload
+        the result like recipe 05.
+    </div>
+</section>
+
+<section>
+    <h2>Complete listing</h2>
+<pre><code class="language-cpp">/*
+ * 09-text-rendering.cpp — a 5x7 bitmap font, drawn with gfx::fill_rect.
+ */
+#define SDL_MAIN_USE_CALLBACKS 1
+#include &lt;SDL3/SDL.h&gt;
+#include &lt;SDL3/SDL_main.h&gt;
+#include "gfx.hpp"
+
+#include &lt;cctype&gt;
+
+/* Glyph table. Each glyph is 7 rows, each row a 5-bit mask (MSB = leftmost). */
+static const Uint8 GLYPH_BLANK[7] = {0,0,0,0,0,0,0};
+static const Uint8 G_A[7] = {0b01110,0b10001,0b10001,0b11111,0b10001,0b10001,0b10001};
+static const Uint8 G_B[7] = {0b11110,0b10001,0b10001,0b11110,0b10001,0b10001,0b11110};
+static const Uint8 G_C[7] = {0b01111,0b10000,0b10000,0b10000,0b10000,0b10000,0b01111};
+static const Uint8 G_D[7] = {0b11110,0b10001,0b10001,0b10001,0b10001,0b10001,0b11110};
+static const Uint8 G_E[7] = {0b11111,0b10000,0b10000,0b11110,0b10000,0b10000,0b11111};
+static const Uint8 G_F[7] = {0b11111,0b10000,0b10000,0b11110,0b10000,0b10000,0b10000};
+static const Uint8 G_G[7] = {0b01111,0b10000,0b10000,0b10011,0b10001,0b10001,0b01111};
+static const Uint8 G_H[7] = {0b10001,0b10001,0b10001,0b11111,0b10001,0b10001,0b10001};
+static const Uint8 G_I[7] = {0b11111,0b00100,0b00100,0b00100,0b00100,0b00100,0b11111};
+static const Uint8 G_J[7] = {0b00111,0b00010,0b00010,0b00010,0b00010,0b10010,0b01100};
+static const Uint8 G_K[7] = {0b10001,0b10010,0b10100,0b11000,0b10100,0b10010,0b10001};
+static const Uint8 G_L[7] = {0b10000,0b10000,0b10000,0b10000,0b10000,0b10000,0b11111};
+static const Uint8 G_M[7] = {0b10001,0b11011,0b10101,0b10001,0b10001,0b10001,0b10001};
+static const Uint8 G_N[7] = {0b10001,0b11001,0b10101,0b10011,0b10001,0b10001,0b10001};
+static const Uint8 G_O[7] = {0b01110,0b10001,0b10001,0b10001,0b10001,0b10001,0b01110};
+static const Uint8 G_P[7] = {0b11110,0b10001,0b10001,0b11110,0b10000,0b10000,0b10000};
+static const Uint8 G_Q[7] = {0b01110,0b10001,0b10001,0b10001,0b10101,0b10010,0b01101};
+static const Uint8 G_R[7] = {0b11110,0b10001,0b10001,0b11110,0b10100,0b10010,0b10001};
+static const Uint8 G_S[7] = {0b01111,0b10000,0b10000,0b01110,0b00001,0b00001,0b11110};
+static const Uint8 G_T[7] = {0b11111,0b00100,0b00100,0b00100,0b00100,0b00100,0b00100};
+static const Uint8 G_U[7] = {0b10001,0b10001,0b10001,0b10001,0b10001,0b10001,0b01110};
+static const Uint8 G_V[7] = {0b10001,0b10001,0b10001,0b10001,0b10001,0b01010,0b00100};
+static const Uint8 G_W[7] = {0b10001,0b10001,0b10001,0b10001,0b10101,0b11011,0b10001};
+static const Uint8 G_X[7] = {0b10001,0b10001,0b01010,0b00100,0b01010,0b10001,0b10001};
+static const Uint8 G_Y[7] = {0b10001,0b10001,0b01010,0b00100,0b00100,0b00100,0b00100};
+static const Uint8 G_Z[7] = {0b11111,0b00001,0b00010,0b00100,0b01000,0b10000,0b11111};
+static const Uint8 G_0[7] = {0b01110,0b10011,0b10101,0b10101,0b10101,0b11001,0b01110};
+static const Uint8 G_1[7] = {0b00100,0b01100,0b00100,0b00100,0b00100,0b00100,0b01110};
+static const Uint8 G_2[7] = {0b01110,0b10001,0b00001,0b00110,0b01000,0b10000,0b11111};
+static const Uint8 G_3[7] = {0b11110,0b00001,0b00001,0b01110,0b00001,0b00001,0b11110};
+static const Uint8 G_4[7] = {0b00010,0b00110,0b01010,0b10010,0b11111,0b00010,0b00010};
+static const Uint8 G_5[7] = {0b11111,0b10000,0b11110,0b00001,0b00001,0b10001,0b01110};
+static const Uint8 G_6[7] = {0b01110,0b10000,0b11110,0b10001,0b10001,0b10001,0b01110};
+static const Uint8 G_7[7] = {0b11111,0b00001,0b00010,0b00100,0b01000,0b01000,0b01000};
+static const Uint8 G_8[7] = {0b01110,0b10001,0b10001,0b01110,0b10001,0b10001,0b01110};
+static const Uint8 G_9[7] = {0b01110,0b10001,0b10001,0b01111,0b00001,0b00001,0b01110};
+static const Uint8 G_DOT[7]  = {0,0,0,0,0,0,0b00100};
+static const Uint8 G_COL[7]  = {0,0,0b00100,0,0b00100,0,0};
+static const Uint8 G_DASH[7] = {0,0,0,0b01110,0,0,0};
+
+static const Uint8 *glyph_for(char c)
+{
+    if (c &gt;= 'a' &amp;&amp; c &lt;= 'z') c = (char)(c - 'a' + 'A');
+    switch (c) {
+    case 'A': return G_A; case 'B': return G_B; case 'C': return G_C; case 'D': return G_D;
+    case 'E': return G_E; case 'F': return G_F; case 'G': return G_G; case 'H': return G_H;
+    case 'I': return G_I; case 'J': return G_J; case 'K': return G_K; case 'L': return G_L;
+    case 'M': return G_M; case 'N': return G_N; case 'O': return G_O; case 'P': return G_P;
+    case 'Q': return G_Q; case 'R': return G_R; case 'S': return G_S; case 'T': return G_T;
+    case 'U': return G_U; case 'V': return G_V; case 'W': return G_W; case 'X': return G_X;
+    case 'Y': return G_Y; case 'Z': return G_Z;
+    case '0': return G_0; case '1': return G_1; case '2': return G_2; case '3': return G_3;
+    case '4': return G_4; case '5': return G_5; case '6': return G_6; case '7': return G_7;
+    case '8': return G_8; case '9': return G_9;
+    case '.': return G_DOT; case ':': return G_COL; case '-': return G_DASH;
+    case ' ': return GLYPH_BLANK;
+    default:  return nullptr;
+    }
+}
+
+static void draw_glyph(SDL_Renderer *r, const Uint8 rows[7],
+                       float x, float y, float scale)
+{
+    for (int row = 0; row &lt; 7; ++row) {
+        for (int col = 0; col &lt; 5; ++col) {
+            if (rows[row] &amp; (1 &lt;&lt; (4 - col))) {
+                gfx::fill_rect(r, x + col * scale, y + row * scale, scale, scale);
+            }
+        }
+    }
+}
+
+static void draw_text(SDL_Renderer *r, const char *s,
+                      float x, float y, float scale)
+{
+    while (*s) {
+        const Uint8 *g = glyph_for(*s);
+        if (g) draw_glyph(r, g, x, y, scale);
+        x += 6.0f * scale;
+        ++s;
+    }
+}
+
+struct AppState {
+    SDL_Window   *window   = nullptr;
+    SDL_Renderer *renderer = nullptr;
+    int score = 0;
+};
+
+SDL_AppResult SDL_AppInit(void **appstate, int, char *[])
+{
+    SDL_SetAppMetadata("Text Rendering", "1.0", "com.example.sdl3.text");
+    if (!SDL_Init(SDL_INIT_VIDEO)) { SDL_Log("%s", SDL_GetError()); return SDL_APP_FAILURE; }
+    AppState *st = new AppState();
+    if (!SDL_CreateWindowAndRenderer("Text Rendering", 800, 400,
+                                     SDL_WINDOW_RESIZABLE,
+                                     &amp;st-&gt;window, &amp;st-&gt;renderer)) {
+        SDL_Log("%s", SDL_GetError()); delete st; return SDL_APP_FAILURE;
+    }
+    SDL_SetRenderVSync(st-&gt;renderer, 1);
+    *appstate = st;
+    return SDL_APP_CONTINUE;
+}
+
+SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *e)
+{
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+    if (e-&gt;type == SDL_EVENT_QUIT) return SDL_APP_SUCCESS;
+    if (e-&gt;type == SDL_EVENT_KEY_DOWN) {
+        if (e-&gt;key.scancode == SDL_SCANCODE_ESCAPE) return SDL_APP_SUCCESS;
+        if (e-&gt;key.scancode == SDL_SCANCODE_SPACE)  ++st-&gt;score;
+    }
+    return SDL_APP_CONTINUE;
+}
+
+SDL_AppResult SDL_AppIterate(void *appstate)
+{
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+    gfx::clear(st-&gt;renderer, 18, 18, 28);
+
+    gfx::set_color(st-&gt;renderer, 240, 240, 240, 255);
+    draw_text(st-&gt;renderer, "SDL3 RECIPES",                40,  40, 4.0f);
+    draw_text(st-&gt;renderer, "PRESS SPACE TO SCORE.",       40, 110, 2.0f);
+
+    char buf[32];
+    SDL_snprintf(buf, sizeof buf, "SCORE: %d", st-&gt;score);
+    gfx::set_color(st-&gt;renderer, 120, 200, 255, 255);
+    draw_text(st-&gt;renderer, buf,                          40, 180, 3.0f);
+
+    SDL_RenderPresent(st-&gt;renderer);
+    return SDL_APP_CONTINUE;
+}
+
+void SDL_AppQuit(void *appstate, SDL_AppResult)
+{
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+    if (st) {
+        SDL_DestroyRenderer(st-&gt;renderer);
+        SDL_DestroyWindow(st-&gt;window);
+        delete st;
+    }
+}
+</code></pre>
+</section>
+
+<section>
+    <h2>Try it yourself</h2>
+    <ol>
+        <li>Add lowercase letters by defining their own glyphs (don't reuse the uppercase shapes).</li>
+        <li>Turn the glyph table into a real sprite-sheet texture (recipe 05) — one upload, one <code>SDL_RenderTexture</code> per character. Much faster than thousands of <code>fill_rect</code> calls when you have lots of text.</li>
+        <li>Add an alignment helper: <code>draw_text_right_aligned(...)</code> that computes total width first.</li>
+        <li>Try <code>SDL_ttf</code> for comparison: install <code>brew install sdl3_ttf</code>, link it, and call <code>TTF_RenderText_Blended</code> to produce a real anti-aliased surface.</li>
+    </ol>
+</section>
+
+<nav class="footnav">
+    <a href="08-audio-basics.html">← 08. Audio Basics</a>
+    <a href="index.html">Index</a>
+    <a href="10-tilemap-rendering.html">Next: Tilemap Rendering →</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+    <a href="../index.html">SDL3 Recipes</a> · <a href="index.html">2D Track</a> · Recipe 09
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-cpp.min.js"></script>
+</body>
+</html>

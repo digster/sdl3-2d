@@ -161,6 +161,25 @@ Things worth knowing:
 
 Run it with `make run-gpu`.
 
+## Recipes (tutorial track)
+
+Inside [`docs/`](docs/index.html) is a progressive set of **24 callback-style
+C++ recipes** — 12 for 2D (`SDL_Renderer`) and 12 for 3D (`SDL_GPU`), ordered
+beginner to advanced. Each recipe is a self-contained HTML page with a
+narrative walkthrough plus a complete drop-in listing for either
+`examples/cpp/callbacks.cpp` (2D) or `examples/cpp-gpu/triangle.cpp` (3D).
+
+- Open `docs/index.html` in any browser to pick a track.
+- 2D: hello window → drawing → input → delta time → textures → animation →
+  collision → audio → text → tilemap → particles → a Pong capstone.
+- 3D: hello triangle → cross-platform shaders → vertex buffers → indices →
+  uniforms/MVP → cube → depth → textures → Phong lighting → many objects →
+  FPS camera → render-to-texture.
+
+No extra build steps — the recipes are read-only docs that describe code you
+paste into the existing examples folders and build with `make run-cpp` /
+`make run-gpu`.
+
 ## Customising
 
 - **Want a C++ traditional-loop or a C callback variant?** Copy the whole

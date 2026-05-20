@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>11 · Particle Systems — 2D Track — SDL3 Recipes</title>
+    <link rel="stylesheet" href="../style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+</head>
+<body>
+
+<nav class="topnav">
+    <a href="../index.html">SDL3 Recipes</a> ›
+    <a href="index.html">2D Track</a> ›
+    <span>11. Particle Systems</span>
+</nav>
+
+<main>
+
+<header class="recipe-header">
+    <span class="badge badge-advanced">Advanced</span>
+    <h1>Recipe 11 — Particle Systems</h1>
+    <p class="tagline">
+        Hundreds of tiny dots, each with their own physics and lifetime.
+        The spawn / update / cull rhythm every particle engine boils down to.
+    </p>
+</header>
+
+<section>
+    <h2>What you'll learn</h2>
+    <ul>
+        <li>The minimal <code>Particle</code> struct: position, velocity, life, colour.</li>
+        <li>The spawn → integrate → cull loop, and why "swap-and-pop" beats <code>erase</code>.</li>
+        <li>How to fade particles by mapping <em>life remaining</em> to alpha.</li>
+        <li>Why we draw each particle as a small filled rect rather than a circle (and when to switch).</li>
+    </ul>
+</section>
+
+<section>
+    <h2>Prerequisites</h2>
+    <p><a href="04-delta-time.html">Recipe 04</a> for the dt model, and any of recipes 02/05 for drawing.</p>
+</section>
+
+<section>
+    <h2>Walkthrough</h2>
+
+    <h3>The particle</h3>
+<pre><code class="language-cpp">struct Particle {
+    float x, y;        // position
+    float vx, vy;      // velocity (px/sec)
+    float life;        // seconds remaining
+    float life_max;    // original life — used for fade ratio
+    Uint8 r, g, b;
+};
+</code></pre>
+
+    <h3>Spawning</h3>
+    <p>
+        On every click (or any event you like), push N particles into the
+        vector with a random spread:
+    </p>
+<pre><code class="language-cpp">static void spawn_burst(std::vector&lt;Particle&gt; &amp;ps, float x, float y, int n)
+{
+    for (int i = 0; i &lt; n; ++i) {
+        float angle = SDL_randf() * 2.0f * SDL_PI_F;
+        float speed = 80.0f + SDL_randf() * 220.0f;
+        ps.push_back(Particle{
+            x, y,
+            SDL_cosf(angle) * speed, SDL_sinf(angle) * speed,
+            0.8f + SDL_randf() * 0.6f,                       // life
+            0.0f,                                            // life_max set below
+            (Uint8)(180 + SDL_rand(76)),
+            (Uint8)(100 + SDL_rand(155)),
+            (Uint8)(40  + SDL_rand(80))
+        });
+        ps.back().life_max = ps.back().life;
+    }
+}
+</code></pre>
+
+    <h3>Integrating and culling</h3>
+    <p>
+        Walk the vector. Move each particle, age it, fade it. When one dies,
+        swap with the last element and <code>pop_back</code>: O(1) deletion,
+        no shifting. The trade-off is the order of particles isn't preserved
+        — for visual particles that never matters.
+    </p>
+<pre><code class="language-cpp">for (size_t i = 0; i &lt; ps.size(); /* no ++ */) {
+    Particle &amp;p = ps[i];
+
+    // Integrate.
+    p.vy += 600.0f * dt;          // gravity
+    p.x  += p.vx * dt;
+    p.y  += p.vy * dt;
+    p.life -= dt;
+
+    if (p.life &lt;= 0.0f) {
+        ps[i] = ps.back();        // swap-and-pop
+        ps.pop_back();
+        continue;                 // don't ++i — i now points at a fresh element
+    }
+    ++i;
+}
+</code></pre>
+
+    <h3>Drawing with fade</h3>
+<pre><code class="language-cpp">for (const Particle &amp;p : ps) {
+    Uint8 a = (Uint8)(255.0f * (p.life / p.life_max));
+    gfx::set_color(renderer, p.r, p.g, p.b, a);
+    gfx::fill_rect(renderer, p.x - 2, p.y - 2, 4, 4);
+}
+</code></pre>
+    <p>
+        Mapping <code>life / life_max</code> to alpha gives a natural fade-out.
+        A small filled rect is the cheapest GPU primitive; for hundreds of
+        thousands you'd batch with <code>SDL_RenderGeometry</code>, but for the
+        ~2,000 you'll spawn here, plain fill_rects are easy and fast enough.
+    </p>
+
+    <div class="note">
+        <strong>Swap-and-pop, not erase.</strong> <code>std::vector::erase(it)</code>
+        shifts every following element down by one — O(N) per removal. With
+        many short-lived particles per frame this becomes the loop's hot spot.
+        Swap-and-pop is O(1) and what every particle engine uses.
+    </div>
+</section>
+
+<section>
+    <h2>Complete listing</h2>
+<pre><code class="language-cpp">/*
+ * 11-particle-systems.cpp — click to burst, watch particles arc and fade.
+ */
+#define SDL_MAIN_USE_CALLBACKS 1
+#include &lt;SDL3/SDL.h&gt;
+#include &lt;SDL3/SDL_main.h&gt;
+#include "gfx.hpp"
+
+#include &lt;vector&gt;
+#include &lt;algorithm&gt;
+
+struct Particle {
+    float x, y, vx, vy;
+    float life, life_max;
+    Uint8 r, g, b;
+};
+
+struct AppState {
+    SDL_Window   *window   = nullptr;
+    SDL_Renderer *renderer = nullptr;
+    Uint64 prev_ns = 0;
+    std::vector&lt;Particle&gt; ps;
+    float mx = 400, my = 300;
+};
+
+static void spawn_burst(std::vector&lt;Particle&gt; &amp;ps, float x, float y, int n)
+{
+    for (int i = 0; i &lt; n; ++i) {
+        float angle = SDL_randf() * 2.0f * SDL_PI_F;
+        float speed = 80.0f + SDL_randf() * 220.0f;
+        Particle p{
+            x, y,
+            SDL_cosf(angle) * speed, SDL_sinf(angle) * speed,
+            0.8f + SDL_randf() * 0.6f, 0.0f,
+            (Uint8)(180 + SDL_rand(76)),
+            (Uint8)(100 + SDL_rand(155)),
+            (Uint8)(40  + SDL_rand(80))
+        };
+        p.life_max = p.life;
+        ps.push_back(p);
+    }
+}
+
+SDL_AppResult SDL_AppInit(void **appstate, int, char *[])
+{
+    SDL_SetAppMetadata("Particles", "1.0", "com.example.sdl3.particles");
+    if (!SDL_Init(SDL_INIT_VIDEO)) { SDL_Log("%s", SDL_GetError()); return SDL_APP_FAILURE; }
+    AppState *st = new AppState();
+    if (!SDL_CreateWindowAndRenderer("Particles", 800, 600,
+                                     SDL_WINDOW_RESIZABLE,
+                                     &amp;st-&gt;window, &amp;st-&gt;renderer)) {
+        SDL_Log("%s", SDL_GetError()); delete st; return SDL_APP_FAILURE;
+    }
+    SDL_SetRenderVSync(st-&gt;renderer, 1);
+    SDL_SetRenderDrawBlendMode(st-&gt;renderer, SDL_BLENDMODE_BLEND);
+    st-&gt;prev_ns = SDL_GetTicksNS();
+    *appstate = st;
+    return SDL_APP_CONTINUE;
+}
+
+SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *e)
+{
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+    if (e-&gt;type == SDL_EVENT_QUIT) return SDL_APP_SUCCESS;
+    if (e-&gt;type == SDL_EVENT_KEY_DOWN &amp;&amp; e-&gt;key.scancode == SDL_SCANCODE_ESCAPE) return SDL_APP_SUCCESS;
+    if (e-&gt;type == SDL_EVENT_MOUSE_MOTION) { st-&gt;mx = e-&gt;motion.x; st-&gt;my = e-&gt;motion.y; }
+    if (e-&gt;type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
+        spawn_burst(st-&gt;ps, e-&gt;button.x, e-&gt;button.y, 200);
+    }
+    return SDL_APP_CONTINUE;
+}
+
+SDL_AppResult SDL_AppIterate(void *appstate)
+{
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+    Uint64 now_ns = SDL_GetTicksNS();
+    float dt = std::min((now_ns - st-&gt;prev_ns) / 1.0e9f, 0.05f);
+    st-&gt;prev_ns = now_ns;
+
+    // Continuous emitter at the cursor — adds a steady stream too.
+    if (SDL_GetMouseState(nullptr, nullptr) &amp; SDL_BUTTON_MASK(SDL_BUTTON_LEFT)) {
+        spawn_burst(st-&gt;ps, st-&gt;mx, st-&gt;my, 4);
+    }
+
+    int win_w = 0, win_h = 0;
+    SDL_GetWindowSize(st-&gt;window, &amp;win_w, &amp;win_h);
+
+    for (size_t i = 0; i &lt; st-&gt;ps.size();) {
+        Particle &amp;p = st-&gt;ps[i];
+        p.vy += 600.0f * dt;
+        p.x  += p.vx * dt;
+        p.y  += p.vy * dt;
+        p.life -= dt;
+
+        if (p.life &lt;= 0.0f || p.y &gt; (float)win_h + 20) {
+            st-&gt;ps[i] = st-&gt;ps.back();
+            st-&gt;ps.pop_back();
+        } else {
+            ++i;
+        }
+    }
+
+    gfx::clear(st-&gt;renderer, 14, 14, 22);
+    for (const Particle &amp;p : st-&gt;ps) {
+        Uint8 a = (Uint8)(255.0f * (p.life / p.life_max));
+        gfx::set_color(st-&gt;renderer, p.r, p.g, p.b, a);
+        gfx::fill_rect(st-&gt;renderer, p.x - 2, p.y - 2, 4, 4);
+    }
+    SDL_RenderPresent(st-&gt;renderer);
+    return SDL_APP_CONTINUE;
+}
+
+void SDL_AppQuit(void *appstate, SDL_AppResult)
+{
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+    if (st) {
+        SDL_DestroyRenderer(st-&gt;renderer);
+        SDL_DestroyWindow(st-&gt;window);
+        delete st;
+    }
+}
+</code></pre>
+</section>
+
+<section>
+    <h2>Try it yourself</h2>
+    <ol>
+        <li>Add air drag: <code>p.vx *= (1.0f - 1.5f * dt); p.vy *= ...;</code>. The fountain becomes "snowfall".</li>
+        <li>Replace gravity with a target-attractor: each particle accelerates toward the mouse position.</li>
+        <li>Switch the drawing to <code>SDL_RenderGeometry</code> — one big triangle list of two-triangle quads. Cheaper than thousands of <code>fill_rect</code>s for very large counts.</li>
+        <li>Add additive blending: <code>SDL_BLENDMODE_ADD</code> on a separate texture and they glow.</li>
+    </ol>
+</section>
+
+<nav class="footnav">
+    <a href="10-tilemap-rendering.html">← 10. Tilemap Rendering</a>
+    <a href="index.html">Index</a>
+    <a href="12-mini-game-pong.html">Next: Mini Game: Pong →</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+    <a href="../index.html">SDL3 Recipes</a> · <a href="index.html">2D Track</a> · Recipe 11
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-cpp.min.js"></script>
+</body>
+</html>

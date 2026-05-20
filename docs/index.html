@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>SDL3 Recipes — 2D & 3D Game Tutorials in C++</title>
+    <meta name="description" content="A progressive, callback-style C++ curriculum for SDL3: 12 recipes for 2D games (SDL_Renderer) and 12 for 3D graphics (SDL_GPU). Beginner to advanced.">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<nav class="topnav">
+    <span>SDL3 Recipes</span>
+</nav>
+
+<main>
+
+<header class="hero">
+    <h1>SDL3 Recipes</h1>
+    <p class="lede">
+        A progressive, callback-style C++ curriculum for SDL3 — twelve recipes for
+        2D games and twelve for 3D graphics, ordered beginner to advanced. Every
+        snippet uses the same <code>SDL_AppInit</code> / <code>SDL_AppEvent</code>
+        / <code>SDL_AppIterate</code> / <code>SDL_AppQuit</code> skeleton, so you
+        learn one loop model and reuse it everywhere.
+    </p>
+</header>
+
+<section>
+    <h2>Pick a track</h2>
+    <div class="track-cards">
+
+        <a class="card" href="2d/index.html">
+            <div class="meta">12 recipes · SDL_Renderer</div>
+            <h2>2D Track</h2>
+            <p>
+                Open a window, draw shapes, load textures, animate sprites, detect
+                collisions, play audio, render text — and finish with a working
+                Pong clone. Uses SDL3's high-level 2D renderer.
+            </p>
+            <span class="cta">Start with Recipe 01 →</span>
+        </a>
+
+        <a class="card" href="3d/index.html">
+            <div class="meta">12 recipes · SDL_GPU</div>
+            <h2>3D Track</h2>
+            <p>
+                Drop one tier below SDL_Renderer to SDL_GPU — Metal / Vulkan /
+                D3D12 under one API. From the "hello triangle" to a textured, lit
+                cube with an FPS camera and offscreen render targets.
+            </p>
+            <span class="cta">Start with Recipe 01 →</span>
+        </a>
+
+    </div>
+</section>
+
+<section>
+    <h2>Why callback-style C++?</h2>
+    <p>
+        SDL3 introduced an alternative to the classic <code>while (running)</code>
+        game loop: define four functions — <code>SDL_AppInit</code>,
+        <code>SDL_AppEvent</code>, <code>SDL_AppIterate</code>,
+        <code>SDL_AppQuit</code> — and SDL drives them for you. This is the
+        recommended model in SDL3 because the same code stays portable to
+        platforms (web via Emscripten, iOS) where your program is forbidden from
+        owning the main loop.
+    </p>
+    <p>
+        The recipes below use this style consistently. Per-app state lives in a
+        single heap <code>AppState</code> struct whose pointer SDL threads back
+        into every callback — no globals, no static state. If you'd rather see a
+        traditional hand-written loop for comparison, the repo's
+        <a href="../examples/c/traditional.c">examples/c/traditional.c</a> shows it
+        in plain C.
+    </p>
+
+    <div class="note">
+        <strong>New here?</strong> Start with the
+        <a href="../README.md">README</a> for installation
+        (<code>brew install sdl3</code> on macOS) and how to build the existing
+        examples with <code>make run-cpp</code> or <code>make run-gpu</code>.
+        Recipe 01 of each track gives you a minimal working file you can drop
+        straight into one of those folders.
+    </div>
+</section>
+
+<section>
+    <h2>How each recipe is laid out</h2>
+    <ul>
+        <li><strong>What you'll learn</strong> — the concepts the recipe introduces.</li>
+        <li><strong>Prerequisites</strong> — earlier recipes you should be comfortable with.</li>
+        <li><strong>Walkthrough</strong> — narrative tutorial, code in small pieces, with the <em>why</em> spelled out.</li>
+        <li><strong>Complete listing</strong> — the full file, ready to paste into <code>examples/cpp/</code> or <code>examples/cpp-gpu/</code> and run.</li>
+        <li><strong>Try it yourself</strong> — small experiments to lock in the concept before moving on.</li>
+    </ul>
+    <p>
+        Code blocks are colourised by <a href="https://prismjs.com/">Prism.js</a>
+        via a CDN. If you're offline before the CDN caches, the code still reads —
+        it's just monochrome.
+    </p>
+</section>
+
+<section>
+    <h2>The track at a glance</h2>
+    <h3>2D — <code>SDL_Renderer</code></h3>
+    <p>
+        Hello Window · Drawing Primitives · Handling Input · Delta Time &amp;
+        Movement · Loading Textures · Sprite Animation · Collision Detection ·
+        Audio Basics · Text Rendering · Tilemap Rendering · Particle Systems ·
+        Mini Game: Pong.
+    </p>
+    <h3>3D — <code>SDL_GPU</code></h3>
+    <p>
+        Hello Triangle · Cross-Platform Shaders · Vertex Buffers · Index Buffers
+        &amp; Quads · Uniforms &amp; the MVP Matrix · The 3D Cube · Depth
+        Testing · Textures &amp; Samplers · Phong Lighting · Multiple Objects ·
+        FPS Camera · Render-to-Texture.
+    </p>
+</section>
+
+</main>
+
+<footer class="site-footer">
+    Part of the <a href="../README.md">sdl3-2d</a> starter template. MIT licensed.
+</footer>
+
+</body>
+</html>

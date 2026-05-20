@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>03 · Vertex Buffers — 3D Track — SDL3 Recipes</title>
+    <link rel="stylesheet" href="../style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+</head>
+<body>
+
+<nav class="topnav">
+    <a href="../index.html">SDL3 Recipes</a> ›
+    <a href="index.html">3D Track</a> ›
+    <span>03. Vertex Buffers</span>
+</nav>
+
+<main>
+
+<header class="recipe-header">
+    <span class="badge badge-intermediate">Intermediate</span>
+    <h1>Recipe 03 — Vertex Buffers</h1>
+    <p class="tagline">
+        Stop baking geometry into shaders. Allocate a GPU buffer, upload three
+        vertices via a transfer buffer, and tell the pipeline how to read them.
+    </p>
+</header>
+
+<section>
+    <h2>What you'll learn</h2>
+    <ul>
+        <li>Why <code>[[vertex_id]]</code> doesn't scale and you need real buffers.</li>
+        <li>The two-step upload: <strong>transfer buffer</strong> (CPU-visible) → <strong>vertex buffer</strong> (GPU-private), one copy in between.</li>
+        <li>How <code>SDL_GPUVertexInputState</code> describes the vertex layout the shader will read.</li>
+        <li>How to receive attributes in MSL (the <code>[[attribute(N)]]</code> annotation).</li>
+    </ul>
+</section>
+
+<section>
+    <h2>Prerequisites</h2>
+    <p><a href="01-hello-triangle.html">Recipe 01 — Hello Triangle</a>.</p>
+</section>
+
+<section>
+    <h2>Walkthrough</h2>
+
+    <h3>The Vertex type</h3>
+    <p>
+        We'll pack <code>(position, color)</code> per vertex into a struct that
+        matches what the shader expects. Layout matters: SDL_GPU sees this as
+        a flat byte blob, so order and padding count.
+    </p>
+<pre><code class="language-cpp">struct Vertex {
+    float x, y, z;          // 12 bytes
+    float r, g, b, a;       // 16 bytes   — total stride 28 bytes
+};
+
+static const Vertex kVerts[3] = {
+    {  0.0f,  0.5f, 0.0f,  1.0f, 0.0f, 0.0f, 1.0f },   // top    red
+    { -0.5f, -0.5f, 0.0f,  0.0f, 1.0f, 0.0f, 1.0f },   // left   green
+    {  0.5f, -0.5f, 0.0f,  0.0f, 0.0f, 1.0f, 1.0f },   // right  blue
+};
+</code></pre>
+
+    <h3>Two buffers, one copy</h3>
+    <p>
+        GPUs typically can't read directly from CPU RAM. The standard
+        SDL_GPU pattern is to write into a <em>transfer buffer</em> (which is
+        CPU-mappable) and then issue a copy command into the real
+        <em>vertex buffer</em> (which sits in GPU memory). Once uploaded, the
+        transfer buffer can be released.
+    </p>
+<pre><code class="language-cpp">// 1. Allocate the destination — the real vertex buffer.
+SDL_GPUBufferCreateInfo vbi{};
+vbi.usage = SDL_GPU_BUFFERUSAGE_VERTEX;
+vbi.size  = sizeof(kVerts);
+st-&gt;vbuf  = SDL_CreateGPUBuffer(st-&gt;device, &amp;vbi);
+
+// 2. Allocate the temporary — the transfer buffer.
+SDL_GPUTransferBufferCreateInfo tbi{};
+tbi.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+tbi.size  = sizeof(kVerts);
+SDL_GPUTransferBuffer *tb = SDL_CreateGPUTransferBuffer(st-&gt;device, &amp;tbi);
+
+// 3. CPU-side: map it and memcpy the vertex data in.
+void *dst = SDL_MapGPUTransferBuffer(st-&gt;device, tb, /*cycle=*/false);
+std::memcpy(dst, kVerts, sizeof(kVerts));
+SDL_UnmapGPUTransferBuffer(st-&gt;device, tb);
+
+// 4. Issue a copy from transfer buffer to vertex buffer.
+SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(st-&gt;device);
+SDL_GPUCopyPass *cp = SDL_BeginGPUCopyPass(cmd);
+
+SDL_GPUTransferBufferLocation src{};
+src.transfer_buffer = tb; src.offset = 0;
+SDL_GPUBufferRegion dst_region{};
+dst_region.buffer = st-&gt;vbuf; dst_region.offset = 0; dst_region.size = sizeof(kVerts);
+
+SDL_UploadToGPUBuffer(cp, &amp;src, &amp;dst_region, /*cycle=*/false);
+SDL_EndGPUCopyPass(cp);
+SDL_SubmitGPUCommandBuffer(cmd);
+
+// 5. Transfer buffer no longer needed.
+SDL_ReleaseGPUTransferBuffer(st-&gt;device, tb);
+</code></pre>
+
+    <h3>Telling the pipeline about the layout</h3>
+    <p>
+        The pipeline needs to know how big each vertex is and where each
+        attribute lives within it. Two arrays go on the
+        <code>SDL_GPUVertexInputState</code>:
+    </p>
+<pre><code class="language-cpp">SDL_GPUVertexBufferDescription vb{};
+vb.slot       = 0;
+vb.pitch      = sizeof(Vertex);                       // bytes between vertices
+vb.input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX;
+
+SDL_GPUVertexAttribute attrs[2]{};
+attrs[0].location    = 0;                              // matches [[attribute(0)]]
+attrs[0].buffer_slot = 0;
+attrs[0].format      = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3;
+attrs[0].offset      = offsetof(Vertex, x);
+attrs[1].location    = 1;                              // matches [[attribute(1)]]
+attrs[1].buffer_slot = 0;
+attrs[1].format      = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4;
+attrs[1].offset      = offsetof(Vertex, r);
+
+SDL_GPUVertexInputState vis{};
+vis.vertex_buffer_descriptions     = &amp;vb;
+vis.num_vertex_buffers             = 1;
+vis.vertex_attributes              = attrs;
+vis.num_vertex_attributes          = 2;
+
+pci.vertex_input_state = vis;                          // on the pipeline create info
+</code></pre>
+
+    <h3>Receiving in MSL</h3>
+<pre><code class="language-cpp">struct VSIn {
+    float3 pos   [[attribute(0)]];
+    float4 color [[attribute(1)]];
+};
+struct VSOut {
+    float4 position [[position]];
+    float4 color;
+};
+vertex VSOut vertexMain(VSIn in [[stage_in]]) {
+    VSOut o;
+    o.position = float4(in.pos, 1.0);
+    o.color    = in.color;
+    return o;
+}
+</code></pre>
+
+    <h3>Binding and drawing</h3>
+<pre><code class="language-cpp">SDL_GPUBufferBinding vbind{};
+vbind.buffer = st-&gt;vbuf; vbind.offset = 0;
+SDL_BindGPUVertexBuffers(pass, /*first_slot=*/0, &amp;vbind, /*num_bindings=*/1);
+SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
+</code></pre>
+
+    <div class="note">
+        <strong>Same triangle, very different machine.</strong> The window
+        looks identical to recipe 01, but the pipeline now reads geometry from
+        memory. From here you can grow to arbitrary meshes, animate them
+        per-vertex on the CPU, or build them once and reuse.
+    </div>
+</section>
+
+<section>
+    <h2>Complete listing</h2>
+<pre><code class="language-cpp">/*
+ * 03-vertex-buffers.cpp — the same triangle as recipe 01, but its three
+ * vertices live in a GPU buffer instead of being baked into the vertex shader.
+ */
+#define SDL_MAIN_USE_CALLBACKS 1
+#include &lt;SDL3/SDL.h&gt;
+#include &lt;SDL3/SDL_main.h&gt;
+
+#include &lt;cstring&gt;
+#include &lt;cstddef&gt;
+
+struct Vertex { float x, y, z, r, g, b, a; };
+static const Vertex kVerts[3] = {
+    {  0.0f,  0.5f, 0.0f,  1, 0, 0, 1 },
+    { -0.5f, -0.5f, 0.0f,  0, 1, 0, 1 },
+    {  0.5f, -0.5f, 0.0f,  0, 0, 1, 1 },
+};
+
+static const char *kVS = R"msl(
+#include &lt;metal_stdlib&gt;
+using namespace metal;
+struct VSIn  { float3 pos [[attribute(0)]]; float4 color [[attribute(1)]]; };
+struct VSOut { float4 position [[position]]; float4 color; };
+vertex VSOut vertexMain(VSIn in [[stage_in]]) {
+    VSOut o; o.position = float4(in.pos, 1.0); o.color = in.color; return o;
+}
+)msl";
+static const char *kFS = R"msl(
+#include &lt;metal_stdlib&gt;
+using namespace metal;
+struct VSOut { float4 position [[position]]; float4 color; };
+fragment float4 fragmentMain(VSOut in [[stage_in]]) { return in.color; }
+)msl";
+
+struct AppState {
+    SDL_Window              *window   = nullptr;
+    SDL_GPUDevice           *device   = nullptr;
+    SDL_GPUGraphicsPipeline *pipeline = nullptr;
+    SDL_GPUBuffer           *vbuf     = nullptr;
+};
+
+static SDL_AppResult fail(const char *what){ SDL_Log("%s: %s", what, SDL_GetError()); return SDL_APP_FAILURE; }
+
+static SDL_GPUShader *make_shader(SDL_GPUDevice *d, const char *src,
+                                  SDL_GPUShaderStage stage, const char *entry)
+{
+    SDL_GPUShaderCreateInfo i{};
+    i.code = (const Uint8 *)src; i.code_size = std::strlen(src);
+    i.entrypoint = entry; i.format = SDL_GPU_SHADERFORMAT_MSL; i.stage = stage;
+    return SDL_CreateGPUShader(d, &amp;i);
+}
+
+static bool upload_vertices(SDL_GPUDevice *dev, SDL_GPUBuffer *dst,
+                            const void *src, Uint32 size)
+{
+    SDL_GPUTransferBufferCreateInfo tbi{};
+    tbi.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+    tbi.size  = size;
+    SDL_GPUTransferBuffer *tb = SDL_CreateGPUTransferBuffer(dev, &amp;tbi);
+    if (!tb) return false;
+
+    void *map = SDL_MapGPUTransferBuffer(dev, tb, false);
+    std::memcpy(map, src, size);
+    SDL_UnmapGPUTransferBuffer(dev, tb);
+
+    SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(dev);
+    SDL_GPUCopyPass *cp = SDL_BeginGPUCopyPass(cmd);
+    SDL_GPUTransferBufferLocation s{}; s.transfer_buffer = tb;
+    SDL_GPUBufferRegion r{}; r.buffer = dst; r.size = size;
+    SDL_UploadToGPUBuffer(cp, &amp;s, &amp;r, false);
+    SDL_EndGPUCopyPass(cp);
+    SDL_SubmitGPUCommandBuffer(cmd);
+    SDL_ReleaseGPUTransferBuffer(dev, tb);
+    return true;
+}
+
+SDL_AppResult SDL_AppInit(void **appstate, int, char *[])
+{
+    SDL_SetAppMetadata("Vertex Buffers", "1.0", "com.example.sdl3.vbuf");
+    if (!SDL_Init(SDL_INIT_VIDEO)) return fail("SDL_Init");
+
+    AppState *st = new AppState(); *appstate = st;
+    st-&gt;device = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_MSL, true, nullptr);
+    if (!st-&gt;device) return fail("CreateGPUDevice");
+    st-&gt;window = SDL_CreateWindow("Vertex Buffers", 800, 600, SDL_WINDOW_RESIZABLE);
+    SDL_ClaimWindowForGPUDevice(st-&gt;device, st-&gt;window);
+
+    // Vertex buffer
+    SDL_GPUBufferCreateInfo vbi{};
+    vbi.usage = SDL_GPU_BUFFERUSAGE_VERTEX; vbi.size = sizeof(kVerts);
+    st-&gt;vbuf = SDL_CreateGPUBuffer(st-&gt;device, &amp;vbi);
+    if (!st-&gt;vbuf) return fail("CreateGPUBuffer");
+    if (!upload_vertices(st-&gt;device, st-&gt;vbuf, kVerts, sizeof(kVerts))) return fail("upload");
+
+    SDL_GPUShader *vs = make_shader(st-&gt;device, kVS, SDL_GPU_SHADERSTAGE_VERTEX,   "vertexMain");
+    SDL_GPUShader *fs = make_shader(st-&gt;device, kFS, SDL_GPU_SHADERSTAGE_FRAGMENT, "fragmentMain");
+    if (!vs || !fs) return fail("shader");
+
+    SDL_GPUVertexBufferDescription vb{};
+    vb.slot = 0; vb.pitch = sizeof(Vertex); vb.input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX;
+
+    SDL_GPUVertexAttribute attrs[2]{};
+    attrs[0].location = 0; attrs[0].buffer_slot = 0;
+    attrs[0].format   = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3;
+    attrs[0].offset   = offsetof(Vertex, x);
+    attrs[1].location = 1; attrs[1].buffer_slot = 0;
+    attrs[1].format   = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4;
+    attrs[1].offset   = offsetof(Vertex, r);
+
+    SDL_GPUVertexInputState vis{};
+    vis.vertex_buffer_descriptions = &amp;vb;
+    vis.num_vertex_buffers         = 1;
+    vis.vertex_attributes          = attrs;
+    vis.num_vertex_attributes      = 2;
+
+    SDL_GPUColorTargetDescription ct{};
+    ct.format = SDL_GetGPUSwapchainTextureFormat(st-&gt;device, st-&gt;window);
+
+    SDL_GPUGraphicsPipelineCreateInfo pci{};
+    pci.vertex_shader = vs; pci.fragment_shader = fs;
+    pci.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+    pci.vertex_input_state = vis;
+    pci.target_info.color_target_descriptions = &amp;ct;
+    pci.target_info.num_color_targets = 1;
+
+    st-&gt;pipeline = SDL_CreateGPUGraphicsPipeline(st-&gt;device, &amp;pci);
+    SDL_ReleaseGPUShader(st-&gt;device, vs);
+    SDL_ReleaseGPUShader(st-&gt;device, fs);
+    if (!st-&gt;pipeline) return fail("pipeline");
+    return SDL_APP_CONTINUE;
+}
+
+SDL_AppResult SDL_AppEvent(void *, SDL_Event *e)
+{
+    if (e-&gt;type == SDL_EVENT_QUIT) return SDL_APP_SUCCESS;
+    if (e-&gt;type == SDL_EVENT_KEY_DOWN &amp;&amp; e-&gt;key.scancode == SDL_SCANCODE_ESCAPE) return SDL_APP_SUCCESS;
+    return SDL_APP_CONTINUE;
+}
+
+SDL_AppResult SDL_AppIterate(void *appstate)
+{
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+    SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(st-&gt;device);
+    SDL_GPUTexture *swap = nullptr; Uint32 sw = 0, sh = 0;
+    SDL_WaitAndAcquireGPUSwapchainTexture(cmd, st-&gt;window, &amp;swap, &amp;sw, &amp;sh);
+    if (swap) {
+        SDL_GPUColorTargetInfo cti{};
+        cti.texture = swap;
+        cti.clear_color = SDL_FColor{ 0.07f, 0.07f, 0.10f, 1 };
+        cti.load_op = SDL_GPU_LOADOP_CLEAR; cti.store_op = SDL_GPU_STOREOP_STORE;
+        SDL_GPURenderPass *pass = SDL_BeginGPURenderPass(cmd, &amp;cti, 1, nullptr);
+        SDL_BindGPUGraphicsPipeline(pass, st-&gt;pipeline);
+        SDL_GPUBufferBinding vbind{}; vbind.buffer = st-&gt;vbuf; vbind.offset = 0;
+        SDL_BindGPUVertexBuffers(pass, 0, &amp;vbind, 1);
+        SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
+        SDL_EndGPURenderPass(pass);
+    }
+    SDL_SubmitGPUCommandBuffer(cmd);
+    return SDL_APP_CONTINUE;
+}
+
+void SDL_AppQuit(void *appstate, SDL_AppResult)
+{
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+    if (!st) return;
+    if (st-&gt;device) {
+        if (st-&gt;vbuf) SDL_ReleaseGPUBuffer(st-&gt;device, st-&gt;vbuf);
+        SDL_ReleaseGPUGraphicsPipeline(st-&gt;device, st-&gt;pipeline);
+        if (st-&gt;window) SDL_ReleaseWindowFromGPUDevice(st-&gt;device, st-&gt;window);
+        SDL_DestroyGPUDevice(st-&gt;device);
+    }
+    SDL_DestroyWindow(st-&gt;window);
+    delete st;
+}
+</code></pre>
+</section>
+
+<section>
+    <h2>Try it yourself</h2>
+    <ol>
+        <li>Edit <code>kVerts</code> to move the apex to <code>(0, 0.9, 0)</code>. The geometry now lives in CPU code, easy to tweak.</li>
+        <li>Add a fourth vertex and a second triangle (you'll need <code>SDL_DrawGPUPrimitives(pass, 6, 1, 0, 0)</code> and 6 entries). This naturally leads into recipe 04: index buffers.</li>
+        <li>Animate the triangle: every frame, write fresh positions into the transfer buffer and re-upload. Notice how the pipeline doesn't change — just the data.</li>
+    </ol>
+</section>
+
+<nav class="footnav">
+    <a href="02-cross-platform-shaders.html">← 02. Cross-Platform Shaders</a>
+    <a href="index.html">Index</a>
+    <a href="04-index-buffers-and-quads.html">Next: Index Buffers &amp; Quads →</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+    <a href="../index.html">SDL3 Recipes</a> · <a href="index.html">3D Track</a> · Recipe 03
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-cpp.min.js"></script>
+</body>
+</html>

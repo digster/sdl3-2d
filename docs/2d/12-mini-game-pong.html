@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>12 · Mini Game: Pong — 2D Track — SDL3 Recipes</title>
+    <link rel="stylesheet" href="../style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+</head>
+<body>
+
+<nav class="topnav">
+    <a href="../index.html">SDL3 Recipes</a> ›
+    <a href="index.html">2D Track</a> ›
+    <span>12. Mini Game: Pong</span>
+</nav>
+
+<main>
+
+<header class="recipe-header">
+    <span class="badge badge-advanced">Advanced</span>
+    <h1>Recipe 12 — Mini Game: Pong</h1>
+    <p class="tagline">
+        The capstone. Everything from recipes 01–11 in one file: input,
+        delta-time movement, AABB collision, audio beeps, bitmap-font score.
+    </p>
+</header>
+
+<section>
+    <h2>What you'll learn</h2>
+    <ul>
+        <li>How the pieces from the previous 11 recipes compose into a real game.</li>
+        <li>A simple "AI" that just tracks the ball's Y with a speed cap — surprisingly fun.</li>
+        <li>How to keep paddle/ball state local and let the loop stay readable.</li>
+        <li>Why we recompute the AABB struct for the paddles each frame instead of caching one.</li>
+    </ul>
+</section>
+
+<section>
+    <h2>Prerequisites</h2>
+    <p>All previous recipes — most importantly 04 (delta time), 07 (collision), 08 (audio), 09 (text).</p>
+</section>
+
+<section>
+    <h2>Walkthrough</h2>
+
+    <p>
+        Pong is the smallest playable game with movement, collision, scoring,
+        and AI. The whole thing fits in one file because all the building
+        blocks already exist in your head from earlier recipes.
+    </p>
+
+    <h3>The shape of the game state</h3>
+<pre><code class="language-cpp">struct AppState {
+    SDL_Window      *window   = nullptr;
+    SDL_Renderer    *renderer = nullptr;
+    SDL_AudioStream *audio    = nullptr;
+    Uint64 prev_ns = 0;
+
+    // Court
+    int W = 800, H = 500;
+
+    // Paddles (centre-y based, fixed x)
+    float pleft_y  = 250, pright_y = 250;
+    float p_h = 90, p_w = 14;
+    float p_speed = 460.0f;
+
+    // Ball
+    float bx = 400, by = 250, br = 8;
+    float bvx = 320, bvy = 200;
+
+    int score_l = 0, score_r = 0;
+};
+</code></pre>
+
+    <h3>Per-frame update</h3>
+    <p>Three jobs: read input, move things, resolve collisions / scoring.</p>
+<pre><code class="language-cpp">// Left paddle: W/S keys.
+const bool *k = SDL_GetKeyboardState(nullptr);
+if (k[SDL_SCANCODE_W]) st-&gt;pleft_y -= st-&gt;p_speed * dt;
+if (k[SDL_SCANCODE_S]) st-&gt;pleft_y += st-&gt;p_speed * dt;
+
+// Right paddle: tiny AI — track the ball with a speed cap.
+float target = st-&gt;by;
+float diff   = target - st-&gt;pright_y;
+float step   = std::clamp(diff, -st-&gt;p_speed * dt, st-&gt;p_speed * dt);
+st-&gt;pright_y += step;
+
+// Clamp paddles inside the court.
+st-&gt;pleft_y  = std::clamp(st-&gt;pleft_y,  st-&gt;p_h / 2, (float)st-&gt;H - st-&gt;p_h / 2);
+st-&gt;pright_y = std::clamp(st-&gt;pright_y, st-&gt;p_h / 2, (float)st-&gt;H - st-&gt;p_h / 2);
+
+// Ball.
+st-&gt;bx += st-&gt;bvx * dt;
+st-&gt;by += st-&gt;bvy * dt;
+
+// Ceiling / floor bounce.
+if (st-&gt;by - st-&gt;br &lt; 0)        { st-&gt;by = st-&gt;br;            st-&gt;bvy = -st-&gt;bvy; play_blip(); }
+if (st-&gt;by + st-&gt;br &gt; st-&gt;H)    { st-&gt;by = st-&gt;H - st-&gt;br;    st-&gt;bvy = -st-&gt;bvy; play_blip(); }
+
+// Paddle collisions (AABB vs ball's bounding rect).
+SDL_FRect pl = { 20.0f,              st-&gt;pleft_y  - st-&gt;p_h / 2, st-&gt;p_w, st-&gt;p_h };
+SDL_FRect pr = { (float)st-&gt;W - 20 - st-&gt;p_w,
+                                       st-&gt;pright_y - st-&gt;p_h / 2, st-&gt;p_w, st-&gt;p_h };
+SDL_FRect br = { st-&gt;bx - st-&gt;br, st-&gt;by - st-&gt;br, st-&gt;br * 2, st-&gt;br * 2 };
+
+if (SDL_HasRectIntersectionFloat(&amp;pl, &amp;br) &amp;&amp; st-&gt;bvx &lt; 0) {
+    st-&gt;bvx = -st-&gt;bvx * 1.04f;        // speed up a touch
+    st-&gt;bvy += (st-&gt;by - st-&gt;pleft_y) * 4.0f;   // angle off paddle centre
+    play_blip();
+}
+if (SDL_HasRectIntersectionFloat(&amp;pr, &amp;br) &amp;&amp; st-&gt;bvx &gt; 0) {
+    st-&gt;bvx = -st-&gt;bvx * 1.04f;
+    st-&gt;bvy += (st-&gt;by - st-&gt;pright_y) * 4.0f;
+    play_blip();
+}
+
+// Scoring.
+if (st-&gt;bx &lt; 0)      { ++st-&gt;score_r; reset_ball(st, +1); play_score(); }
+if (st-&gt;bx &gt; st-&gt;W)  { ++st-&gt;score_l; reset_ball(st, -1); play_score(); }
+</code></pre>
+
+    <div class="note">
+        <strong>Why recompute the paddle rects each frame?</strong> Because
+        their positions just moved. Caching would force a "dirty flag" or risk
+        a one-frame mismatch. At a handful of rects per game it's just easier
+        to rebuild than to maintain.
+    </div>
+</section>
+
+<section>
+    <h2>Complete listing</h2>
+    <p>
+        Long but flat — one file, no helpers in headers. Drop into
+        <a href="../../examples/cpp/callbacks.cpp">examples/cpp/callbacks.cpp</a>
+        and <code>make run-cpp</code>. <strong>W/S</strong> for left paddle,
+        <strong>Esc</strong> to quit.
+    </p>
+<pre><code class="language-cpp">/*
+ * 12-mini-game-pong.cpp — the 2D-track capstone.
+ *
+ * Controls: W/S to move the left paddle. Right paddle is a simple AI.
+ * Score is shown at the top using a small inline 5x7 bitmap font.
+ */
+#define SDL_MAIN_USE_CALLBACKS 1
+#include &lt;SDL3/SDL.h&gt;
+#include &lt;SDL3/SDL_main.h&gt;
+#include "gfx.hpp"
+
+#include &lt;vector&gt;
+#include &lt;algorithm&gt;
+
+struct AppState {
+    SDL_Window      *window   = nullptr;
+    SDL_Renderer    *renderer = nullptr;
+    SDL_AudioStream *audio    = nullptr;
+    Uint64 prev_ns = 0;
+
+    int   W = 800, H = 500;
+    float pleft_y  = 250, pright_y = 250;
+    float p_h = 90, p_w = 14, p_speed = 460.0f;
+    float bx = 400, by = 250, br = 8;
+    float bvx = 320, bvy = 200;
+    int   score_l = 0, score_r = 0;
+};
+
+static void enqueue_tone(SDL_AudioStream *s, float hz, float secs)
+{
+    if (!s) return;
+    const int rate = 48000;
+    const int n = (int)(rate * secs);
+    std::vector&lt;float&gt; buf(n);
+    const int env = 3 * rate / 1000;
+    for (int i = 0; i &lt; n; ++i) {
+        float t = (float)i / rate;
+        float a = 1.0f;
+        if (i &lt; env)         a = (float)i / env;
+        if (i &gt; n - env)     a = (float)(n - i) / env;
+        buf[i] = a * 0.2f * SDL_sinf(2.0f * SDL_PI_F * hz * t);
+    }
+    SDL_PutAudioStreamData(s, buf.data(), (int)(buf.size() * sizeof(float)));
+}
+
+/* Single-digit drawing. Good enough for a 0-9 score. */
+static const Uint8 D_0[7] = {0b01110,0b10011,0b10101,0b10101,0b10101,0b11001,0b01110};
+static const Uint8 D_1[7] = {0b00100,0b01100,0b00100,0b00100,0b00100,0b00100,0b01110};
+static const Uint8 D_2[7] = {0b01110,0b10001,0b00001,0b00110,0b01000,0b10000,0b11111};
+static const Uint8 D_3[7] = {0b11110,0b00001,0b00001,0b01110,0b00001,0b00001,0b11110};
+static const Uint8 D_4[7] = {0b00010,0b00110,0b01010,0b10010,0b11111,0b00010,0b00010};
+static const Uint8 D_5[7] = {0b11111,0b10000,0b11110,0b00001,0b00001,0b10001,0b01110};
+static const Uint8 D_6[7] = {0b01110,0b10000,0b11110,0b10001,0b10001,0b10001,0b01110};
+static const Uint8 D_7[7] = {0b11111,0b00001,0b00010,0b00100,0b01000,0b01000,0b01000};
+static const Uint8 D_8[7] = {0b01110,0b10001,0b10001,0b01110,0b10001,0b10001,0b01110};
+static const Uint8 D_9[7] = {0b01110,0b10001,0b10001,0b01111,0b00001,0b00001,0b01110};
+static const Uint8 *digit_for(int d) {
+    static const Uint8 *all[10] = {D_0,D_1,D_2,D_3,D_4,D_5,D_6,D_7,D_8,D_9};
+    return all[std::clamp(d, 0, 9)];
+}
+static void draw_digit(SDL_Renderer *r, int d, float x, float y, float s)
+{
+    const Uint8 *g = digit_for(d);
+    for (int row = 0; row &lt; 7; ++row)
+        for (int col = 0; col &lt; 5; ++col)
+            if (g[row] &amp; (1 &lt;&lt; (4 - col)))
+                gfx::fill_rect(r, x + col * s, y + row * s, s, s);
+}
+
+static void reset_ball(AppState *st, int direction)
+{
+    st-&gt;bx = (float)st-&gt;W / 2; st-&gt;by = (float)st-&gt;H / 2;
+    st-&gt;bvx = 320.0f * direction;
+    st-&gt;bvy = (SDL_randf() - 0.5f) * 320.0f;
+}
+
+SDL_AppResult SDL_AppInit(void **appstate, int, char *[])
+{
+    SDL_SetAppMetadata("Pong", "1.0", "com.example.sdl3.pong");
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO)) { SDL_Log("%s", SDL_GetError()); return SDL_APP_FAILURE; }
+    AppState *st = new AppState();
+    if (!SDL_CreateWindowAndRenderer("Pong", st-&gt;W, st-&gt;H,
+                                     SDL_WINDOW_RESIZABLE,
+                                     &amp;st-&gt;window, &amp;st-&gt;renderer)) {
+        SDL_Log("%s", SDL_GetError()); delete st; return SDL_APP_FAILURE;
+    }
+    SDL_SetRenderVSync(st-&gt;renderer, 1);
+
+    SDL_AudioSpec want{};
+    want.freq = 48000; want.format = SDL_AUDIO_F32; want.channels = 1;
+    st-&gt;audio = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,
+                                          &amp;want, nullptr, nullptr);
+    if (st-&gt;audio) SDL_ResumeAudioStreamDevice(st-&gt;audio);
+
+    st-&gt;prev_ns = SDL_GetTicksNS();
+    *appstate = st;
+    return SDL_APP_CONTINUE;
+}
+
+SDL_AppResult SDL_AppEvent(void *, SDL_Event *e)
+{
+    if (e-&gt;type == SDL_EVENT_QUIT) return SDL_APP_SUCCESS;
+    if (e-&gt;type == SDL_EVENT_KEY_DOWN &amp;&amp; e-&gt;key.scancode == SDL_SCANCODE_ESCAPE) return SDL_APP_SUCCESS;
+    return SDL_APP_CONTINUE;
+}
+
+SDL_AppResult SDL_AppIterate(void *appstate)
+{
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+
+    Uint64 now_ns = SDL_GetTicksNS();
+    float dt = std::min((now_ns - st-&gt;prev_ns) / 1.0e9f, 0.05f);
+    st-&gt;prev_ns = now_ns;
+
+    // Track the current window size so paddles stay in bounds on resize.
+    int win_w = 0, win_h = 0;
+    SDL_GetWindowSize(st-&gt;window, &amp;win_w, &amp;win_h);
+    st-&gt;W = win_w; st-&gt;H = win_h;
+
+    const bool *k = SDL_GetKeyboardState(nullptr);
+    if (k[SDL_SCANCODE_W]) st-&gt;pleft_y -= st-&gt;p_speed * dt;
+    if (k[SDL_SCANCODE_S]) st-&gt;pleft_y += st-&gt;p_speed * dt;
+
+    float diff = st-&gt;by - st-&gt;pright_y;
+    float step = std::clamp(diff, -st-&gt;p_speed * dt, st-&gt;p_speed * dt);
+    st-&gt;pright_y += step;
+
+    st-&gt;pleft_y  = std::clamp(st-&gt;pleft_y,  st-&gt;p_h / 2, (float)st-&gt;H - st-&gt;p_h / 2);
+    st-&gt;pright_y = std::clamp(st-&gt;pright_y, st-&gt;p_h / 2, (float)st-&gt;H - st-&gt;p_h / 2);
+
+    st-&gt;bx += st-&gt;bvx * dt;
+    st-&gt;by += st-&gt;bvy * dt;
+    if (st-&gt;by - st-&gt;br &lt; 0)            { st-&gt;by = st-&gt;br;             st-&gt;bvy = -st-&gt;bvy; enqueue_tone(st-&gt;audio, 660, 0.04f); }
+    if (st-&gt;by + st-&gt;br &gt; (float)st-&gt;H)  { st-&gt;by = (float)st-&gt;H - st-&gt;br; st-&gt;bvy = -st-&gt;bvy; enqueue_tone(st-&gt;audio, 660, 0.04f); }
+
+    SDL_FRect pl = { 20.0f,                   st-&gt;pleft_y  - st-&gt;p_h / 2, st-&gt;p_w, st-&gt;p_h };
+    SDL_FRect pr = { (float)st-&gt;W - 20 - st-&gt;p_w, st-&gt;pright_y - st-&gt;p_h / 2, st-&gt;p_w, st-&gt;p_h };
+    SDL_FRect bb = { st-&gt;bx - st-&gt;br, st-&gt;by - st-&gt;br, st-&gt;br * 2, st-&gt;br * 2 };
+
+    if (SDL_HasRectIntersectionFloat(&amp;pl, &amp;bb) &amp;&amp; st-&gt;bvx &lt; 0) {
+        st-&gt;bvx = -st-&gt;bvx * 1.04f;
+        st-&gt;bvy += (st-&gt;by - st-&gt;pleft_y) * 4.0f;
+        enqueue_tone(st-&gt;audio, 880, 0.05f);
+    }
+    if (SDL_HasRectIntersectionFloat(&amp;pr, &amp;bb) &amp;&amp; st-&gt;bvx &gt; 0) {
+        st-&gt;bvx = -st-&gt;bvx * 1.04f;
+        st-&gt;bvy += (st-&gt;by - st-&gt;pright_y) * 4.0f;
+        enqueue_tone(st-&gt;audio, 880, 0.05f);
+    }
+
+    if (st-&gt;bx &lt; 0)            { ++st-&gt;score_r; reset_ball(st, +1); enqueue_tone(st-&gt;audio, 220, 0.15f); }
+    if (st-&gt;bx &gt; (float)st-&gt;W)  { ++st-&gt;score_l; reset_ball(st, -1); enqueue_tone(st-&gt;audio, 220, 0.15f); }
+
+    // -------- draw --------
+    gfx::clear(st-&gt;renderer, 14, 14, 22);
+
+    // Centre dashed line.
+    gfx::set_color(st-&gt;renderer, 80, 80, 100, 255);
+    for (int y = 0; y &lt; st-&gt;H; y += 24) {
+        gfx::fill_rect(st-&gt;renderer, (float)st-&gt;W / 2 - 2, (float)y, 4, 12);
+    }
+
+    // Paddles &amp; ball.
+    gfx::set_color(st-&gt;renderer, 240, 240, 240, 255);
+    gfx::fill_rect(st-&gt;renderer, pl.x, pl.y, pl.w, pl.h);
+    gfx::fill_rect(st-&gt;renderer, pr.x, pr.y, pr.w, pr.h);
+    gfx::fill_circle(st-&gt;renderer, st-&gt;bx, st-&gt;by, st-&gt;br);
+
+    // Score.
+    gfx::set_color(st-&gt;renderer, 120, 200, 255, 255);
+    draw_digit(st-&gt;renderer, st-&gt;score_l, (float)st-&gt;W / 2 - 80, 24, 5.0f);
+    gfx::set_color(st-&gt;renderer, 255, 200,  60, 255);
+    draw_digit(st-&gt;renderer, st-&gt;score_r, (float)st-&gt;W / 2 + 40, 24, 5.0f);
+
+    SDL_RenderPresent(st-&gt;renderer);
+    return SDL_APP_CONTINUE;
+}
+
+void SDL_AppQuit(void *appstate, SDL_AppResult)
+{
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+    if (st) {
+        if (st-&gt;audio) SDL_DestroyAudioStream(st-&gt;audio);
+        SDL_DestroyRenderer(st-&gt;renderer);
+        SDL_DestroyWindow(st-&gt;window);
+        delete st;
+    }
+}
+</code></pre>
+</section>
+
+<section>
+    <h2>Try it yourself</h2>
+    <ol>
+        <li>Cap the score at 11 and show a "GAME OVER" screen using the bitmap font.</li>
+        <li>Make the AI worse: introduce a reaction delay (it tracks where the ball <em>was</em> 100 ms ago).</li>
+        <li>Add a particle burst (recipe 11) on every paddle hit.</li>
+        <li>Two-player: replace the AI with arrow-key control for the right paddle.</li>
+    </ol>
+    <p>
+        That's the 2D track. The
+        <a href="../3d/index.html">3D track →</a> takes you a tier deeper
+        into <code>SDL_GPU</code> — shaders, vertex buffers, perspective
+        cameras.
+    </p>
+</section>
+
+<nav class="footnav">
+    <a href="11-particle-systems.html">← 11. Particle Systems</a>
+    <a href="index.html">Index</a>
+    <a href="../3d/index.html">3D Track →</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+    <a href="../index.html">SDL3 Recipes</a> · <a href="index.html">2D Track</a> · Recipe 12
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-cpp.min.js"></script>
+</body>
+</html>

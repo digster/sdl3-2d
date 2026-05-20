@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>08 · Audio Basics — 2D Track — SDL3 Recipes</title>
+    <link rel="stylesheet" href="../style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+</head>
+<body>
+
+<nav class="topnav">
+    <a href="../index.html">SDL3 Recipes</a> ›
+    <a href="index.html">2D Track</a> ›
+    <span>08. Audio Basics</span>
+</nav>
+
+<main>
+
+<header class="recipe-header">
+    <span class="badge badge-intermediate">Intermediate</span>
+    <h1>Recipe 08 — Audio Basics</h1>
+    <p class="tagline">
+        Make a sound. The SDL3 audio-stream model in the smallest example that
+        still teaches you what a stream is.
+    </p>
+</header>
+
+<section>
+    <h2>What you'll learn</h2>
+    <ul>
+        <li>SDL3's audio-stream design: queue PCM bytes in, the device pulls them out, the format is converted for you.</li>
+        <li>How to open the default playback device and bind a stream to it.</li>
+        <li>How to synthesise a beep in code so you don't need a WAV file.</li>
+        <li>Where <code>SDL_LoadWAV</code> would fit in if you do have one.</li>
+    </ul>
+</section>
+
+<section>
+    <h2>Prerequisites</h2>
+    <p><a href="03-handling-input.html">Recipe 03 — Handling Input</a> (for the keypress that triggers the beep).</p>
+</section>
+
+<section>
+    <h2>Walkthrough</h2>
+
+    <h3>The audio-stream model</h3>
+    <p>
+        SDL2's old audio API had you supply a callback; SDL3 replaces that with
+        <strong>audio streams</strong>. Conceptually: you push raw PCM bytes
+        into a stream with <code>SDL_PutAudioStreamData</code>, the audio device
+        consumes them in the background, and SDL handles any sample-rate /
+        format / channel conversion in between. Your code never blocks on audio.
+    </p>
+
+    <h3>Init</h3>
+    <p>
+        Add <code>SDL_INIT_AUDIO</code> to the init flag and open a stream for
+        the default playback device:
+    </p>
+<pre><code class="language-cpp">if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO)) { /* ... */ }
+
+// The format we'll PRODUCE. SDL converts to whatever the device wants.
+SDL_AudioSpec want{};
+want.freq     = 48000;
+want.format   = SDL_AUDIO_F32;       // 32-bit float, easiest to synthesise
+want.channels = 1;                    // mono
+
+st-&gt;stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,
+                                       &amp;want, /*callback=*/nullptr, /*userdata=*/nullptr);
+if (!st-&gt;stream) { SDL_Log("audio: %s", SDL_GetError()); return SDL_APP_FAILURE; }
+
+// Devices start paused; resume so playback actually happens.
+SDL_ResumeAudioStreamDevice(st-&gt;stream);
+</code></pre>
+
+    <h3>Synthesising a 0.15-second beep</h3>
+<pre><code class="language-cpp">static void play_beep(SDL_AudioStream *s, float freq_hz = 660.0f, float secs = 0.15f)
+{
+    const int rate    = 48000;
+    const int samples = (int)(rate * secs);
+    std::vector&lt;float&gt; buf(samples);
+
+    // Simple sine with a 4ms linear attack/release so it doesn't click.
+    const int env = 4 * rate / 1000;        // 4ms in samples
+    for (int i = 0; i &lt; samples; ++i) {
+        float t = (float)i / rate;
+        float a = 1.0f;
+        if (i &lt; env)             a = (float)i / env;
+        if (i &gt; samples - env)   a = (float)(samples - i) / env;
+        buf[i] = a * 0.25f * SDL_sinf(2.0f * SDL_PI_F * freq_hz * t);
+    }
+    SDL_PutAudioStreamData(s, buf.data(), (int)(buf.size() * sizeof(float)));
+}
+</code></pre>
+    <p>
+        The function returns immediately; the device drains <code>buf</code> in
+        the background. Call it again to queue more — they queue, they don't
+        overlap (we'd need a mixer for that).
+    </p>
+
+    <h3>Loading a WAV (if you have one)</h3>
+<pre><code class="language-cpp">// One-shot loader. Returns ownership; free with SDL_free(audio_buf).
+SDL_AudioSpec spec; Uint8 *buf = nullptr; Uint32 len = 0;
+if (!SDL_LoadWAV("assets/blip.wav", &amp;spec, &amp;buf, &amp;len)) {
+    SDL_Log("LoadWAV: %s", SDL_GetError());
+}
+// Open a stream with the SAME spec so no conversion is needed; or different,
+// SDL will convert. Then SDL_PutAudioStreamData(stream, buf, (int)len).
+SDL_free(buf);
+</code></pre>
+
+    <div class="warn">
+        <strong>The device starts paused.</strong> Forgetting
+        <code>SDL_ResumeAudioStreamDevice</code> after open is the most common
+        "I queued bytes but heard nothing" bug.
+    </div>
+</section>
+
+<section>
+    <h2>Complete listing</h2>
+    <p>Press Space to beep at 660 Hz; arrow up/down beeps at 880/440 Hz.</p>
+<pre><code class="language-cpp">/*
+ * 08-audio-basics.cpp — a triphonic beep box.
+ */
+#define SDL_MAIN_USE_CALLBACKS 1
+#include &lt;SDL3/SDL.h&gt;
+#include &lt;SDL3/SDL_main.h&gt;
+#include "gfx.hpp"
+
+#include &lt;vector&gt;
+
+struct AppState {
+    SDL_Window   *window   = nullptr;
+    SDL_Renderer *renderer = nullptr;
+    SDL_AudioStream *stream = nullptr;
+    int blink = 0;             // flashes the screen briefly when a beep plays
+};
+
+static void play_beep(SDL_AudioStream *s, float freq_hz, float secs = 0.15f)
+{
+    const int rate    = 48000;
+    const int samples = (int)(rate * secs);
+    std::vector&lt;float&gt; buf(samples);
+    const int env = 4 * rate / 1000;
+    for (int i = 0; i &lt; samples; ++i) {
+        float t = (float)i / rate;
+        float a = 1.0f;
+        if (i &lt; env)             a = (float)i / env;
+        if (i &gt; samples - env)   a = (float)(samples - i) / env;
+        buf[i] = a * 0.25f * SDL_sinf(2.0f * SDL_PI_F * freq_hz * t);
+    }
+    SDL_PutAudioStreamData(s, buf.data(), (int)(buf.size() * sizeof(float)));
+}
+
+SDL_AppResult SDL_AppInit(void **appstate, int, char *[])
+{
+    SDL_SetAppMetadata("Audio Basics", "1.0", "com.example.sdl3.audio");
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO)) { SDL_Log("%s", SDL_GetError()); return SDL_APP_FAILURE; }
+    AppState *st = new AppState();
+    if (!SDL_CreateWindowAndRenderer("Audio Basics", 640, 400,
+                                     SDL_WINDOW_RESIZABLE,
+                                     &amp;st-&gt;window, &amp;st-&gt;renderer)) {
+        SDL_Log("%s", SDL_GetError()); delete st; return SDL_APP_FAILURE;
+    }
+    SDL_SetRenderVSync(st-&gt;renderer, 1);
+
+    SDL_AudioSpec want{};
+    want.freq     = 48000;
+    want.format   = SDL_AUDIO_F32;
+    want.channels = 1;
+    st-&gt;stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,
+                                           &amp;want, nullptr, nullptr);
+    if (!st-&gt;stream) { SDL_Log("audio: %s", SDL_GetError()); delete st; return SDL_APP_FAILURE; }
+    SDL_ResumeAudioStreamDevice(st-&gt;stream);
+
+    *appstate = st;
+    return SDL_APP_CONTINUE;
+}
+
+SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *e)
+{
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+    if (e-&gt;type == SDL_EVENT_QUIT) return SDL_APP_SUCCESS;
+    if (e-&gt;type == SDL_EVENT_KEY_DOWN) {
+        if (e-&gt;key.scancode == SDL_SCANCODE_ESCAPE) return SDL_APP_SUCCESS;
+        if (e-&gt;key.scancode == SDL_SCANCODE_SPACE)  { play_beep(st-&gt;stream, 660); st-&gt;blink = 8; }
+        if (e-&gt;key.scancode == SDL_SCANCODE_UP)     { play_beep(st-&gt;stream, 880); st-&gt;blink = 8; }
+        if (e-&gt;key.scancode == SDL_SCANCODE_DOWN)   { play_beep(st-&gt;stream, 440); st-&gt;blink = 8; }
+    }
+    return SDL_APP_CONTINUE;
+}
+
+SDL_AppResult SDL_AppIterate(void *appstate)
+{
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+    Uint8 bg = st-&gt;blink &gt; 0 ? 90 : 18;
+    if (st-&gt;blink &gt; 0) --st-&gt;blink;
+    gfx::clear(st-&gt;renderer, bg, bg, bg + 10);
+
+    // Three keys, three "buttons".
+    const char *labels[3] = { "DOWN 440Hz", "SPACE 660Hz", "UP 880Hz" };
+    (void)labels;  // (we'll render text in recipe 09)
+    gfx::set_color(st-&gt;renderer, 255, 200, 60, 255);
+    gfx::fill_rect(st-&gt;renderer,  60, 160, 160, 80);
+    gfx::set_color(st-&gt;renderer, 120, 200, 255, 255);
+    gfx::fill_rect(st-&gt;renderer, 240, 160, 160, 80);
+    gfx::set_color(st-&gt;renderer, 255, 120, 200, 255);
+    gfx::fill_rect(st-&gt;renderer, 420, 160, 160, 80);
+
+    SDL_RenderPresent(st-&gt;renderer);
+    return SDL_APP_CONTINUE;
+}
+
+void SDL_AppQuit(void *appstate, SDL_AppResult)
+{
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+    if (st) {
+        if (st-&gt;stream) SDL_DestroyAudioStream(st-&gt;stream);
+        SDL_DestroyRenderer(st-&gt;renderer);
+        SDL_DestroyWindow(st-&gt;window);
+        delete st;
+    }
+}
+</code></pre>
+</section>
+
+<section>
+    <h2>Try it yourself</h2>
+    <ol>
+        <li>Change <code>want.channels</code> to 2 and synthesise a different waveform in each ear (interleave: L,R,L,R…). Now the beep is stereo.</li>
+        <li>Save a WAV with your favourite tool, drop it next to the binary, replace the synthesiser with <code>SDL_LoadWAV</code> + <code>SDL_PutAudioStreamData</code>.</li>
+        <li>Spam the keys. Notice beeps queue rather than overlap — you'd need to open multiple streams (one per voice) for chords.</li>
+        <li>Add <code>SDL_PauseAudioStreamDevice</code> on <code>P</code> to toggle pause.</li>
+    </ol>
+</section>
+
+<nav class="footnav">
+    <a href="07-collision-detection.html">← 07. Collision Detection</a>
+    <a href="index.html">Index</a>
+    <a href="09-text-rendering.html">Next: Text Rendering →</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+    <a href="../index.html">SDL3 Recipes</a> · <a href="index.html">2D Track</a> · Recipe 08
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-cpp.min.js"></script>
+</body>
+</html>

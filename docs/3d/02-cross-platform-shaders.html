@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>02 · Cross-Platform Shaders — 3D Track — SDL3 Recipes</title>
+    <link rel="stylesheet" href="../style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+</head>
+<body>
+
+<nav class="topnav">
+    <a href="../index.html">SDL3 Recipes</a> ›
+    <a href="index.html">3D Track</a> ›
+    <span>02. Cross-Platform Shaders</span>
+</nav>
+
+<main>
+
+<header class="recipe-header">
+    <span class="badge badge-beginner">Beginner</span>
+    <h1>Recipe 02 — Cross-Platform Shaders</h1>
+    <p class="tagline">
+        MSL works on macOS; SPIR-V on Linux; DXIL on Windows. Detect what the
+        device wants, ship whichever bytecode matches.
+    </p>
+</header>
+
+<section>
+    <h2>What you'll learn</h2>
+    <ul>
+        <li>The shader-format menu SDL_GPU understands: MSL, SPIR-V, DXIL, DXBC, MetalLib.</li>
+        <li>How to query the device for what it accepts (<code>SDL_GetGPUShaderFormats</code>).</li>
+        <li>The pragmatic recipe-track choice: MSL source for clarity on macOS, with a path to SPIR-V for portability.</li>
+        <li>Why offline shader compilation eventually becomes worth it.</li>
+    </ul>
+</section>
+
+<section>
+    <h2>Prerequisites</h2>
+    <p><a href="01-hello-triangle.html">Recipe 01 — Hello Triangle</a>.</p>
+</section>
+
+<section>
+    <h2>Walkthrough</h2>
+
+    <h3>What "shader format" means</h3>
+    <p>
+        SDL_GPU does not contain a shader compiler. You hand it bytes that the
+        backend's native graphics API can consume. The bit-flags are:
+    </p>
+    <ul>
+        <li><code>SDL_GPU_SHADERFORMAT_MSL</code> — Metal Shading Language <em>source text</em>. macOS-only, compiled at runtime.</li>
+        <li><code>SDL_GPU_SHADERFORMAT_METALLIB</code> — pre-compiled Metal bytecode. macOS, but faster startup.</li>
+        <li><code>SDL_GPU_SHADERFORMAT_SPIRV</code> — Vulkan's IR. The lingua franca of cross-platform shaders.</li>
+        <li><code>SDL_GPU_SHADERFORMAT_DXIL</code> — DirectX 12 intermediate language. Windows.</li>
+        <li><code>SDL_GPU_SHADERFORMAT_DXBC</code> — older DirectX bytecode.</li>
+    </ul>
+
+    <h3>Negotiating with the device</h3>
+    <p>
+        When you create the device you advertise <em>all</em> the formats you
+        can supply. SDL picks one and remembers it. You can then ask which
+        format(s) the device ended up wanting:
+    </p>
+<pre><code class="language-cpp">SDL_GPUDevice *dev = SDL_CreateGPUDevice(
+    SDL_GPU_SHADERFORMAT_MSL | SDL_GPU_SHADERFORMAT_SPIRV,
+    /*debug=*/true, /*name=*/nullptr);
+
+SDL_GPUShaderFormat formats = SDL_GetGPUShaderFormats(dev);
+if (formats &amp; SDL_GPU_SHADERFORMAT_MSL)   SDL_Log("device wants MSL");
+if (formats &amp; SDL_GPU_SHADERFORMAT_SPIRV) SDL_Log("device wants SPIR-V");
+</code></pre>
+
+    <h3>Pattern: pick the right blob</h3>
+    <p>
+        For each shader, ship multiple bytecodes (compiled offline) plus a
+        small dispatcher that picks the right one. With glslang/SPIRV-Cross
+        you can author once in GLSL and emit SPIR-V, MSL, and DXIL:
+    </p>
+<pre><code class="language-cpp">// Pseudo-API around what real engines do.
+static SDL_GPUShader *load_shader(SDL_GPUDevice *dev,
+                                  SDL_GPUShaderStage stage,
+                                  const char *entrypoint)
+{
+    const Uint8 *bytes = nullptr;
+    size_t       size  = 0;
+    SDL_GPUShaderFormat fmt{};
+
+    SDL_GPUShaderFormat have = SDL_GetGPUShaderFormats(dev);
+    if (have &amp; SDL_GPU_SHADERFORMAT_MSL)   { bytes = MSL_bytes;   size = MSL_size;   fmt = SDL_GPU_SHADERFORMAT_MSL;   }
+    else if (have &amp; SDL_GPU_SHADERFORMAT_SPIRV){ bytes = SPV_bytes;size = SPV_size;   fmt = SDL_GPU_SHADERFORMAT_SPIRV; }
+    else if (have &amp; SDL_GPU_SHADERFORMAT_DXIL) { bytes = DXIL_bytes;size = DXIL_size; fmt = SDL_GPU_SHADERFORMAT_DXIL;  }
+    else { SDL_Log("no supported shader format"); return nullptr; }
+
+    SDL_GPUShaderCreateInfo i{};
+    i.code = bytes; i.code_size = size;
+    i.entrypoint = entrypoint;
+    i.format = fmt;
+    i.stage  = stage;
+    return SDL_CreateGPUShader(dev, &amp;i);
+}
+</code></pre>
+
+    <h3>Why this recipe track sticks to MSL source</h3>
+    <p>
+        Offline shader compilation would force us to ship a build pipeline:
+        glslang, SPIRV-Cross, plus a way to embed the resulting blobs as C++
+        arrays. For a teaching template that pretends "just <code>brew install
+        sdl3</code>" is enough, that's too big a leap. So:
+    </p>
+    <ul>
+        <li>On macOS we hand SDL MSL source and the Metal driver compiles at startup. Slight per-launch cost, zero extra tooling.</li>
+        <li>On Linux/Windows you'd add a SPIR-V/DXIL build step. The recipes below stay MSL because the repo targets macOS, but the dispatcher pattern above is what you'd add.</li>
+    </ul>
+
+    <div class="note">
+        <strong>When to commit to offline.</strong> The moment you have more
+        than two shaders, want symbol-level diagnostics, or distribute to
+        non-developer machines, build a real shader-compile step. Authoring in
+        GLSL → SPIRV-Cross → all three targets is the conventional path.
+    </div>
+</section>
+
+<section>
+    <h2>Complete listing</h2>
+    <p>A diagnostic build that prints the available shader formats and then runs the same triangle as recipe 01.</p>
+<pre><code class="language-cpp">/*
+ * 02-cross-platform-shaders.cpp — diagnostic + MSL fallback.
+ */
+#define SDL_MAIN_USE_CALLBACKS 1
+#include &lt;SDL3/SDL.h&gt;
+#include &lt;SDL3/SDL_main.h&gt;
+
+#include &lt;cstring&gt;
+
+static const char *kVS = R"msl(
+#include &lt;metal_stdlib&gt;
+using namespace metal;
+struct VSOut { float4 position [[position]]; float4 color; };
+vertex VSOut vertexMain(uint vid [[vertex_id]]) {
+    const float2 P[3] = { float2(0.0, 0.5), float2(-0.5,-0.5), float2(0.5,-0.5) };
+    const float3 C[3] = { float3(1,0.4,0.3), float3(0.3,1,0.4), float3(0.4,0.3,1) };
+    VSOut o; o.position = float4(P[vid], 0, 1); o.color = float4(C[vid], 1); return o;
+}
+)msl";
+
+static const char *kFS = R"msl(
+#include &lt;metal_stdlib&gt;
+using namespace metal;
+struct VSOut { float4 position [[position]]; float4 color; };
+fragment float4 fragmentMain(VSOut in [[stage_in]]) { return in.color; }
+)msl";
+
+struct AppState {
+    SDL_Window              *window   = nullptr;
+    SDL_GPUDevice           *device   = nullptr;
+    SDL_GPUGraphicsPipeline *pipeline = nullptr;
+};
+
+static void log_formats(SDL_GPUShaderFormat f)
+{
+    SDL_Log("device accepts shader formats:");
+    if (f &amp; SDL_GPU_SHADERFORMAT_MSL)      SDL_Log("  - MSL (Metal source)");
+    if (f &amp; SDL_GPU_SHADERFORMAT_METALLIB) SDL_Log("  - METALLIB (compiled Metal)");
+    if (f &amp; SDL_GPU_SHADERFORMAT_SPIRV)    SDL_Log("  - SPIRV (Vulkan)");
+    if (f &amp; SDL_GPU_SHADERFORMAT_DXIL)     SDL_Log("  - DXIL (D3D12)");
+    if (f &amp; SDL_GPU_SHADERFORMAT_DXBC)     SDL_Log("  - DXBC (D3D11)");
+}
+
+SDL_AppResult SDL_AppInit(void **appstate, int, char *[])
+{
+    SDL_SetAppMetadata("Cross-Platform Shaders", "1.0", "com.example.sdl3.shaders");
+    if (!SDL_Init(SDL_INIT_VIDEO)) { SDL_Log("init: %s", SDL_GetError()); return SDL_APP_FAILURE; }
+
+    AppState *st = new AppState(); *appstate = st;
+
+    // Advertise EVERY format we could conceivably supply. SDL picks what's
+    // appropriate for the actual GPU backend.
+    SDL_GPUShaderFormat advertise =
+        SDL_GPU_SHADERFORMAT_MSL | SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL;
+
+    st-&gt;device = SDL_CreateGPUDevice(advertise, true, nullptr);
+    if (!st-&gt;device) { SDL_Log("CreateGPUDevice: %s", SDL_GetError()); return SDL_APP_FAILURE; }
+
+    log_formats(SDL_GetGPUShaderFormats(st-&gt;device));
+
+    st-&gt;window = SDL_CreateWindow("Cross-Platform Shaders", 800, 600, SDL_WINDOW_RESIZABLE);
+    SDL_ClaimWindowForGPUDevice(st-&gt;device, st-&gt;window);
+
+    // For this template we only carry MSL. Refuse if the device doesn't want it.
+    if (!(SDL_GetGPUShaderFormats(st-&gt;device) &amp; SDL_GPU_SHADERFORMAT_MSL)) {
+        SDL_Log("This recipe only ships MSL shaders; non-Metal backend detected.");
+        return SDL_APP_FAILURE;
+    }
+
+    SDL_GPUShaderCreateInfo vsi{};
+    vsi.code = (const Uint8 *)kVS; vsi.code_size = std::strlen(kVS);
+    vsi.entrypoint = "vertexMain"; vsi.format = SDL_GPU_SHADERFORMAT_MSL; vsi.stage = SDL_GPU_SHADERSTAGE_VERTEX;
+    SDL_GPUShader *vs = SDL_CreateGPUShader(st-&gt;device, &amp;vsi);
+
+    SDL_GPUShaderCreateInfo fsi{};
+    fsi.code = (const Uint8 *)kFS; fsi.code_size = std::strlen(kFS);
+    fsi.entrypoint = "fragmentMain"; fsi.format = SDL_GPU_SHADERFORMAT_MSL; fsi.stage = SDL_GPU_SHADERSTAGE_FRAGMENT;
+    SDL_GPUShader *fs = SDL_CreateGPUShader(st-&gt;device, &amp;fsi);
+
+    SDL_GPUColorTargetDescription ct{};
+    ct.format = SDL_GetGPUSwapchainTextureFormat(st-&gt;device, st-&gt;window);
+
+    SDL_GPUGraphicsPipelineCreateInfo pci{};
+    pci.vertex_shader = vs; pci.fragment_shader = fs;
+    pci.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+    pci.target_info.color_target_descriptions = &amp;ct;
+    pci.target_info.num_color_targets = 1;
+    st-&gt;pipeline = SDL_CreateGPUGraphicsPipeline(st-&gt;device, &amp;pci);
+
+    SDL_ReleaseGPUShader(st-&gt;device, vs);
+    SDL_ReleaseGPUShader(st-&gt;device, fs);
+    if (!st-&gt;pipeline) { SDL_Log("pipeline: %s", SDL_GetError()); return SDL_APP_FAILURE; }
+
+    return SDL_APP_CONTINUE;
+}
+
+SDL_AppResult SDL_AppEvent(void *, SDL_Event *e)
+{
+    if (e-&gt;type == SDL_EVENT_QUIT) return SDL_APP_SUCCESS;
+    if (e-&gt;type == SDL_EVENT_KEY_DOWN &amp;&amp; e-&gt;key.scancode == SDL_SCANCODE_ESCAPE) return SDL_APP_SUCCESS;
+    return SDL_APP_CONTINUE;
+}
+
+SDL_AppResult SDL_AppIterate(void *appstate)
+{
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+    SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(st-&gt;device);
+    SDL_GPUTexture *swap = nullptr; Uint32 sw = 0, sh = 0;
+    SDL_WaitAndAcquireGPUSwapchainTexture(cmd, st-&gt;window, &amp;swap, &amp;sw, &amp;sh);
+    if (swap) {
+        SDL_GPUColorTargetInfo cti{};
+        cti.texture = swap;
+        cti.clear_color = SDL_FColor{ 0.05f, 0.07f, 0.10f, 1 };
+        cti.load_op = SDL_GPU_LOADOP_CLEAR; cti.store_op = SDL_GPU_STOREOP_STORE;
+        SDL_GPURenderPass *pass = SDL_BeginGPURenderPass(cmd, &amp;cti, 1, nullptr);
+        SDL_BindGPUGraphicsPipeline(pass, st-&gt;pipeline);
+        SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
+        SDL_EndGPURenderPass(pass);
+    }
+    SDL_SubmitGPUCommandBuffer(cmd);
+    return SDL_APP_CONTINUE;
+}
+
+void SDL_AppQuit(void *appstate, SDL_AppResult)
+{
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+    if (!st) return;
+    if (st-&gt;device) {
+        SDL_ReleaseGPUGraphicsPipeline(st-&gt;device, st-&gt;pipeline);
+        if (st-&gt;window) SDL_ReleaseWindowFromGPUDevice(st-&gt;device, st-&gt;window);
+        SDL_DestroyGPUDevice(st-&gt;device);
+    }
+    SDL_DestroyWindow(st-&gt;window);
+    delete st;
+}
+</code></pre>
+</section>
+
+<section>
+    <h2>Try it yourself</h2>
+    <ol>
+        <li>Run on macOS and check the console: you should see "MSL" and possibly "METALLIB."</li>
+        <li>Remove <code>SDL_GPU_SHADERFORMAT_MSL</code> from the <code>advertise</code> bitmask. Device creation fails on macOS because no usable format was offered.</li>
+        <li>Install <a href="https://github.com/KhronosGroup/glslang">glslangValidator</a> and compile a small GLSL shader to SPIR-V. Embed the bytes as a <code>static const Uint8 SPV_VS[] = { ... }</code> array and add a SPIRV branch to your loader.</li>
+    </ol>
+</section>
+
+<nav class="footnav">
+    <a href="01-hello-triangle.html">← 01. Hello Triangle</a>
+    <a href="index.html">Index</a>
+    <a href="03-vertex-buffers.html">Next: Vertex Buffers →</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+    <a href="../index.html">SDL3 Recipes</a> · <a href="index.html">3D Track</a> · Recipe 02
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-cpp.min.js"></script>
+</body>
+</html>

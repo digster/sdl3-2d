@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>04 · Index Buffers &amp; Quads — 3D Track — SDL3 Recipes</title>
+    <link rel="stylesheet" href="../style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+</head>
+<body>
+
+<nav class="topnav">
+    <a href="../index.html">SDL3 Recipes</a> ›
+    <a href="index.html">3D Track</a> ›
+    <span>04. Index Buffers &amp; Quads</span>
+</nav>
+
+<main>
+
+<header class="recipe-header">
+    <span class="badge badge-intermediate">Intermediate</span>
+    <h1>Recipe 04 — Index Buffers &amp; Quads</h1>
+    <p class="tagline">
+        A quad is two triangles. Four unique corners, six indices —
+        index buffers in one sentence.
+    </p>
+</header>
+
+<section>
+    <h2>What you'll learn</h2>
+    <ul>
+        <li>Why duplicate vertices are bad and indices are the cure.</li>
+        <li>How to allocate, upload, and bind an <code>SDL_GPU</code> index buffer.</li>
+        <li>The two index sizes (16-bit vs 32-bit) and which to pick.</li>
+        <li><code>SDL_DrawGPUIndexedPrimitives</code> as the indexed analogue of recipe 03's draw call.</li>
+    </ul>
+</section>
+
+<section>
+    <h2>Prerequisites</h2>
+    <p><a href="03-vertex-buffers.html">Recipe 03 — Vertex Buffers</a>.</p>
+</section>
+
+<section>
+    <h2>Walkthrough</h2>
+
+    <h3>The problem with no indices</h3>
+    <p>
+        Drawing a quad as two triangles in <code>TRIANGLELIST</code> mode with
+        a plain vertex buffer takes <strong>six</strong> vertices — two of
+        them duplicates of two others. For a cube it's even worse: 8 unique
+        corners but 36 vertices in the list. Indices let you keep a small
+        unique-corner array and reference each one as many times as you like.
+    </p>
+
+    <h3>Quad with 4 vertices and 6 indices</h3>
+<pre><code class="language-cpp">struct Vertex { float x, y, z, r, g, b, a; };
+
+// Four corners of a unit quad centred on origin.
+//   0 ─── 1
+//   │  /  │
+//   │ /   │
+//   3 ─── 2
+static const Vertex kQuad[4] = {
+    { -0.5f,  0.5f, 0, 1, 0, 0, 1 },     // 0 top-left    red
+    {  0.5f,  0.5f, 0, 0, 1, 0, 1 },     // 1 top-right   green
+    {  0.5f, -0.5f, 0, 0, 0, 1, 1 },     // 2 bot-right   blue
+    { -0.5f, -0.5f, 0, 1, 1, 0, 1 },     // 3 bot-left    yellow
+};
+// Two triangles: (0,1,2) and (0,2,3). The shared edge 0-2 is implicit.
+static const Uint16 kIndices[6] = { 0, 1, 2,  0, 2, 3 };
+</code></pre>
+
+    <h3>Index buffer creation &amp; upload</h3>
+    <p>
+        Same pattern as the vertex buffer in recipe 03, just with the
+        <code>INDEX</code> usage flag. We can reuse the transfer-buffer helper
+        if we like; the listing below shows the steps inline.
+    </p>
+<pre><code class="language-cpp">SDL_GPUBufferCreateInfo ibi{};
+ibi.usage = SDL_GPU_BUFFERUSAGE_INDEX;
+ibi.size  = sizeof(kIndices);
+st-&gt;ibuf  = SDL_CreateGPUBuffer(st-&gt;device, &amp;ibi);
+
+// ...build a transfer buffer of size sizeof(kIndices), memcpy kIndices in,
+// SDL_UploadToGPUBuffer to st-&gt;ibuf...
+</code></pre>
+
+    <h3>Drawing with indices</h3>
+<pre><code class="language-cpp">SDL_GPUBufferBinding vbind{}; vbind.buffer = st-&gt;vbuf; vbind.offset = 0;
+SDL_BindGPUVertexBuffers(pass, 0, &amp;vbind, 1);
+
+SDL_GPUBufferBinding ibind{}; ibind.buffer = st-&gt;ibuf; ibind.offset = 0;
+SDL_BindGPUIndexBuffer(pass, &amp;ibind, SDL_GPU_INDEXELEMENTSIZE_16BIT);
+
+SDL_DrawGPUIndexedPrimitives(pass,
+    /*num_indices=*/   6,
+    /*num_instances=*/ 1,
+    /*first_index=*/   0,
+    /*vertex_offset=*/ 0,
+    /*first_instance=*/0);
+</code></pre>
+
+    <h3>16-bit vs 32-bit indices</h3>
+    <p>
+        <code>SDL_GPU_INDEXELEMENTSIZE_16BIT</code> can address up to 65,535
+        vertices and uses half the memory. <code>32BIT</code> goes to ~4.3
+        billion. For most meshes 16-bit is the right default — switch only
+        when a single buffer needs more than 64K vertices.
+    </p>
+
+    <div class="note">
+        <strong>Winding order matters.</strong> By default SDL_GPU draws both
+        sides of every triangle (no culling). If you enable back-face culling
+        later, ensure your indices walk counter-clockwise when viewed from
+        outside, or you'll get an invisible mesh.
+    </div>
+</section>
+
+<section>
+    <h2>Complete listing</h2>
+<pre><code class="language-cpp">/*
+ * 04-index-buffers-and-quads.cpp — a four-corner quad drawn as two
+ * indexed triangles. Same pipeline as recipe 03 plus an index buffer.
+ */
+#define SDL_MAIN_USE_CALLBACKS 1
+#include &lt;SDL3/SDL.h&gt;
+#include &lt;SDL3/SDL_main.h&gt;
+
+#include &lt;cstring&gt;
+#include &lt;cstddef&gt;
+
+struct Vertex { float x, y, z, r, g, b, a; };
+static const Vertex kQuad[4] = {
+    { -0.5f,  0.5f, 0, 1, 0, 0, 1 },
+    {  0.5f,  0.5f, 0, 0, 1, 0, 1 },
+    {  0.5f, -0.5f, 0, 0, 0, 1, 1 },
+    { -0.5f, -0.5f, 0, 1, 1, 0, 1 },
+};
+static const Uint16 kIndices[6] = { 0, 1, 2,  0, 2, 3 };
+
+static const char *kVS = R"msl(
+#include &lt;metal_stdlib&gt;
+using namespace metal;
+struct VSIn  { float3 pos [[attribute(0)]]; float4 color [[attribute(1)]]; };
+struct VSOut { float4 position [[position]]; float4 color; };
+vertex VSOut vertexMain(VSIn in [[stage_in]]) {
+    VSOut o; o.position = float4(in.pos, 1.0); o.color = in.color; return o;
+}
+)msl";
+static const char *kFS = R"msl(
+#include &lt;metal_stdlib&gt;
+using namespace metal;
+struct VSOut { float4 position [[position]]; float4 color; };
+fragment float4 fragmentMain(VSOut in [[stage_in]]) { return in.color; }
+)msl";
+
+struct AppState {
+    SDL_Window              *window   = nullptr;
+    SDL_GPUDevice           *device   = nullptr;
+    SDL_GPUGraphicsPipeline *pipeline = nullptr;
+    SDL_GPUBuffer           *vbuf     = nullptr;
+    SDL_GPUBuffer           *ibuf     = nullptr;
+};
+
+static SDL_AppResult fail(const char *w){ SDL_Log("%s: %s", w, SDL_GetError()); return SDL_APP_FAILURE; }
+
+static SDL_GPUShader *make_shader(SDL_GPUDevice *d, const char *src,
+                                  SDL_GPUShaderStage stage, const char *entry)
+{
+    SDL_GPUShaderCreateInfo i{};
+    i.code = (const Uint8 *)src; i.code_size = std::strlen(src);
+    i.entrypoint = entry; i.format = SDL_GPU_SHADERFORMAT_MSL; i.stage = stage;
+    return SDL_CreateGPUShader(d, &amp;i);
+}
+
+static bool upload(SDL_GPUDevice *dev, SDL_GPUBuffer *dst,
+                   const void *src, Uint32 size)
+{
+    SDL_GPUTransferBufferCreateInfo tbi{};
+    tbi.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD; tbi.size = size;
+    SDL_GPUTransferBuffer *tb = SDL_CreateGPUTransferBuffer(dev, &amp;tbi);
+    if (!tb) return false;
+    void *m = SDL_MapGPUTransferBuffer(dev, tb, false);
+    std::memcpy(m, src, size);
+    SDL_UnmapGPUTransferBuffer(dev, tb);
+    SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(dev);
+    SDL_GPUCopyPass *cp = SDL_BeginGPUCopyPass(cmd);
+    SDL_GPUTransferBufferLocation s{}; s.transfer_buffer = tb;
+    SDL_GPUBufferRegion r{}; r.buffer = dst; r.size = size;
+    SDL_UploadToGPUBuffer(cp, &amp;s, &amp;r, false);
+    SDL_EndGPUCopyPass(cp);
+    SDL_SubmitGPUCommandBuffer(cmd);
+    SDL_ReleaseGPUTransferBuffer(dev, tb);
+    return true;
+}
+
+SDL_AppResult SDL_AppInit(void **appstate, int, char *[])
+{
+    SDL_SetAppMetadata("Index Buffers", "1.0", "com.example.sdl3.idx");
+    if (!SDL_Init(SDL_INIT_VIDEO)) return fail("init");
+    AppState *st = new AppState(); *appstate = st;
+    st-&gt;device = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_MSL, true, nullptr);
+    if (!st-&gt;device) return fail("dev");
+    st-&gt;window = SDL_CreateWindow("Index Buffers &amp; Quads", 800, 600, SDL_WINDOW_RESIZABLE);
+    SDL_ClaimWindowForGPUDevice(st-&gt;device, st-&gt;window);
+
+    SDL_GPUBufferCreateInfo vbi{}; vbi.usage = SDL_GPU_BUFFERUSAGE_VERTEX; vbi.size = sizeof(kQuad);
+    st-&gt;vbuf = SDL_CreateGPUBuffer(st-&gt;device, &amp;vbi);
+    SDL_GPUBufferCreateInfo ibi{}; ibi.usage = SDL_GPU_BUFFERUSAGE_INDEX;  ibi.size = sizeof(kIndices);
+    st-&gt;ibuf = SDL_CreateGPUBuffer(st-&gt;device, &amp;ibi);
+    if (!upload(st-&gt;device, st-&gt;vbuf, kQuad, sizeof(kQuad))) return fail("upload v");
+    if (!upload(st-&gt;device, st-&gt;ibuf, kIndices, sizeof(kIndices))) return fail("upload i");
+
+    SDL_GPUShader *vs = make_shader(st-&gt;device, kVS, SDL_GPU_SHADERSTAGE_VERTEX,   "vertexMain");
+    SDL_GPUShader *fs = make_shader(st-&gt;device, kFS, SDL_GPU_SHADERSTAGE_FRAGMENT, "fragmentMain");
+
+    SDL_GPUVertexBufferDescription vb{}; vb.slot = 0;
+    vb.pitch = sizeof(Vertex); vb.input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX;
+    SDL_GPUVertexAttribute attrs[2]{};
+    attrs[0].location = 0; attrs[0].buffer_slot = 0;
+    attrs[0].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3; attrs[0].offset = offsetof(Vertex, x);
+    attrs[1].location = 1; attrs[1].buffer_slot = 0;
+    attrs[1].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4; attrs[1].offset = offsetof(Vertex, r);
+
+    SDL_GPUVertexInputState vis{};
+    vis.vertex_buffer_descriptions = &amp;vb; vis.num_vertex_buffers = 1;
+    vis.vertex_attributes = attrs;        vis.num_vertex_attributes = 2;
+
+    SDL_GPUColorTargetDescription ct{};
+    ct.format = SDL_GetGPUSwapchainTextureFormat(st-&gt;device, st-&gt;window);
+
+    SDL_GPUGraphicsPipelineCreateInfo pci{};
+    pci.vertex_shader = vs; pci.fragment_shader = fs;
+    pci.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+    pci.vertex_input_state = vis;
+    pci.target_info.color_target_descriptions = &amp;ct;
+    pci.target_info.num_color_targets = 1;
+    st-&gt;pipeline = SDL_CreateGPUGraphicsPipeline(st-&gt;device, &amp;pci);
+    SDL_ReleaseGPUShader(st-&gt;device, vs);
+    SDL_ReleaseGPUShader(st-&gt;device, fs);
+    if (!st-&gt;pipeline) return fail("pipeline");
+    return SDL_APP_CONTINUE;
+}
+
+SDL_AppResult SDL_AppEvent(void *, SDL_Event *e)
+{
+    if (e-&gt;type == SDL_EVENT_QUIT) return SDL_APP_SUCCESS;
+    if (e-&gt;type == SDL_EVENT_KEY_DOWN &amp;&amp; e-&gt;key.scancode == SDL_SCANCODE_ESCAPE) return SDL_APP_SUCCESS;
+    return SDL_APP_CONTINUE;
+}
+
+SDL_AppResult SDL_AppIterate(void *appstate)
+{
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+    SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(st-&gt;device);
+    SDL_GPUTexture *swap = nullptr; Uint32 sw = 0, sh = 0;
+    SDL_WaitAndAcquireGPUSwapchainTexture(cmd, st-&gt;window, &amp;swap, &amp;sw, &amp;sh);
+    if (swap) {
+        SDL_GPUColorTargetInfo cti{};
+        cti.texture = swap;
+        cti.clear_color = SDL_FColor{ 0.07f, 0.07f, 0.10f, 1 };
+        cti.load_op = SDL_GPU_LOADOP_CLEAR; cti.store_op = SDL_GPU_STOREOP_STORE;
+        SDL_GPURenderPass *pass = SDL_BeginGPURenderPass(cmd, &amp;cti, 1, nullptr);
+        SDL_BindGPUGraphicsPipeline(pass, st-&gt;pipeline);
+        SDL_GPUBufferBinding vbind{}; vbind.buffer = st-&gt;vbuf;
+        SDL_BindGPUVertexBuffers(pass, 0, &amp;vbind, 1);
+        SDL_GPUBufferBinding ibind{}; ibind.buffer = st-&gt;ibuf;
+        SDL_BindGPUIndexBuffer(pass, &amp;ibind, SDL_GPU_INDEXELEMENTSIZE_16BIT);
+        SDL_DrawGPUIndexedPrimitives(pass, 6, 1, 0, 0, 0);
+        SDL_EndGPURenderPass(pass);
+    }
+    SDL_SubmitGPUCommandBuffer(cmd);
+    return SDL_APP_CONTINUE;
+}
+
+void SDL_AppQuit(void *appstate, SDL_AppResult)
+{
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+    if (!st) return;
+    if (st-&gt;device) {
+        if (st-&gt;ibuf) SDL_ReleaseGPUBuffer(st-&gt;device, st-&gt;ibuf);
+        if (st-&gt;vbuf) SDL_ReleaseGPUBuffer(st-&gt;device, st-&gt;vbuf);
+        SDL_ReleaseGPUGraphicsPipeline(st-&gt;device, st-&gt;pipeline);
+        if (st-&gt;window) SDL_ReleaseWindowFromGPUDevice(st-&gt;device, st-&gt;window);
+        SDL_DestroyGPUDevice(st-&gt;device);
+    }
+    SDL_DestroyWindow(st-&gt;window);
+    delete st;
+}
+</code></pre>
+</section>
+
+<section>
+    <h2>Try it yourself</h2>
+    <ol>
+        <li>Add 4 more vertices for a second smaller quad and append 6 indices that reference them. One draw call now renders both quads.</li>
+        <li>Swap to <code>SDL_GPU_INDEXELEMENTSIZE_32BIT</code> and switch the array element type to <code>Uint32</code>. Same picture, double the index buffer size.</li>
+        <li>Reorder the indices to <code>{0, 2, 1, 0, 3, 2}</code> — the winding flips. With back-face culling enabled later this would make the quad disappear.</li>
+    </ol>
+</section>
+
+<nav class="footnav">
+    <a href="03-vertex-buffers.html">← 03. Vertex Buffers</a>
+    <a href="index.html">Index</a>
+    <a href="05-uniforms-and-mvp.html">Next: Uniforms &amp; MVP →</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+    <a href="../index.html">SDL3 Recipes</a> · <a href="index.html">3D Track</a> · Recipe 04
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-cpp.min.js"></script>
+</body>
+</html>

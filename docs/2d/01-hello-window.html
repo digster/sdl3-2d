@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>01 · Hello Window — 2D Track — SDL3 Recipes</title>
+    <link rel="stylesheet" href="../style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+</head>
+<body>
+
+<nav class="topnav">
+    <a href="../index.html">SDL3 Recipes</a> ›
+    <a href="index.html">2D Track</a> ›
+    <span>01. Hello Window</span>
+</nav>
+
+<main>
+
+<header class="recipe-header">
+    <span class="badge badge-beginner">Beginner</span>
+    <h1>Recipe 01 — Hello Window</h1>
+    <p class="tagline">
+        The smallest legal SDL3 callback program: open a window, paint it a
+        colour, and quit cleanly.
+    </p>
+</header>
+
+<section>
+    <h2>What you'll learn</h2>
+    <ul>
+        <li>The four <code>SDL_App*</code> callbacks SDL3 wants you to define.</li>
+        <li>How to put your app state in a heap struct and let SDL thread it back to you.</li>
+        <li>The "clear → draw → present" lifecycle every 2D frame follows.</li>
+        <li>Why SDL3 returns <code>true</code> on success (and not <code>0</code>).</li>
+    </ul>
+</section>
+
+<section>
+    <h2>Prerequisites</h2>
+    <p>
+        SDL3 installed (<code>brew install sdl3</code> on macOS) and the repo's
+        examples building (<code>make run-cpp</code> succeeds). No prior recipe
+        needed — this is recipe one.
+    </p>
+</section>
+
+<section>
+    <h2>Walkthrough</h2>
+
+    <p>
+        SDL3 supports two loop styles. The classic style is the
+        <code>while&nbsp;(running)</code> game loop in your own <code>main()</code>.
+        The other style — the one we'll use everywhere in these recipes — is the
+        <strong>callback model</strong>: you define four functions, and SDL calls
+        them at the right moments. This model survives the trip to web (Emscripten)
+        and mobile platforms unchanged, because on those platforms your program
+        isn't allowed to own the main loop.
+    </p>
+
+    <h3>1. Enable the callback model</h3>
+    <p>
+        Two lines, at the very top of the file, before any other SDL header:
+    </p>
+<pre><code class="language-cpp">#define SDL_MAIN_USE_CALLBACKS 1
+#include &lt;SDL3/SDL.h&gt;
+#include &lt;SDL3/SDL_main.h&gt;   // provides the real entry point (also on macOS)
+</code></pre>
+    <p>
+        The <code>#define</code> tells <code>&lt;SDL3/SDL_main.h&gt;</code> to wire
+        up a <code>main()</code> for us that calls our four callbacks. Without it
+        you'd be back to writing your own loop. Including <code>SDL_main.h</code>
+        is required on macOS even in callback mode, because Cocoa needs SDL's
+        startup shim.
+    </p>
+
+    <h3>2. Declare your state</h3>
+    <p>
+        We won't use globals. Instead, every long-lived thing the app cares
+        about — window handles, timers, game state — lives in one struct on the
+        heap. SDL holds a pointer to it for us and passes it back into every
+        callback. For now, that's just the window and the renderer:
+    </p>
+<pre><code class="language-cpp">struct AppState {
+    SDL_Window   *window   = nullptr;
+    SDL_Renderer *renderer = nullptr;
+};
+</code></pre>
+
+    <h3>3. <code>SDL_AppInit</code> — one-time setup</h3>
+    <p>
+        SDL calls this once at startup. We init the SDL subsystem we need
+        (<code>SDL_INIT_VIDEO</code>), create a window with a renderer attached,
+        and store the resulting <code>AppState*</code> in <code>*appstate</code>.
+        That pointer is what SDL will thread back into the other three
+        callbacks.
+    </p>
+<pre><code class="language-cpp">SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
+{
+    (void)argc; (void)argv;
+
+    // Optional metadata used by the window manager / about box.
+    SDL_SetAppMetadata("Hello Window", "1.0", "com.example.sdl3.hello");
+
+    // SDL3 convention: true == success. (SDL2 returned 0 — be careful.)
+    if (!SDL_Init(SDL_INIT_VIDEO)) {
+        SDL_Log("SDL_Init failed: %s", SDL_GetError());
+        return SDL_APP_FAILURE;
+    }
+
+    AppState *st = new AppState();
+
+    if (!SDL_CreateWindowAndRenderer("Hello Window", 800, 600,
+                                     SDL_WINDOW_RESIZABLE,
+                                     &amp;st-&gt;window, &amp;st-&gt;renderer)) {
+        SDL_Log("SDL_CreateWindowAndRenderer failed: %s", SDL_GetError());
+        delete st;
+        return SDL_APP_FAILURE;
+    }
+    SDL_SetRenderVSync(st-&gt;renderer, 1);   // pace to the display refresh rate
+
+    *appstate = st;            // SDL hands this back into every callback
+    return SDL_APP_CONTINUE;   // tell SDL we're ready to run
+}
+</code></pre>
+    <p>
+        Every callback returns an <code>SDL_AppResult</code>:
+        <code>SDL_APP_CONTINUE</code> means "keep running",
+        <code>SDL_APP_SUCCESS</code> means "exit cleanly", and
+        <code>SDL_APP_FAILURE</code> means "exit with an error".
+    </p>
+
+    <h3>4. <code>SDL_AppEvent</code> — one event at a time</h3>
+    <p>
+        SDL calls this once for every incoming event. The minimal job is to
+        notice when the user closed the window and quit:
+    </p>
+<pre><code class="language-cpp">SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *e)
+{
+    (void)appstate;
+    if (e-&gt;type == SDL_EVENT_QUIT) {
+        return SDL_APP_SUCCESS;   // window close button or system-requested quit
+    }
+    return SDL_APP_CONTINUE;
+}
+</code></pre>
+
+    <h3>5. <code>SDL_AppIterate</code> — one frame</h3>
+    <p>
+        SDL calls this once per frame. The 2D drawing lifecycle is always
+        <em>clear → draw → present</em>. Right now we have nothing to draw, so
+        it's just clear-and-present:
+    </p>
+<pre><code class="language-cpp">SDL_AppResult SDL_AppIterate(void *appstate)
+{
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+
+    // Pick the clear colour (R, G, B, A), then issue the clear.
+    // "Set then draw" is the universal pattern for SDL_Renderer.
+    SDL_SetRenderDrawColor(st-&gt;renderer, 18, 18, 28, 255);
+    SDL_RenderClear(st-&gt;renderer);
+
+    // (Future recipes will draw something between these two calls.)
+
+    SDL_RenderPresent(st-&gt;renderer);   // swap the back buffer to the screen
+    return SDL_APP_CONTINUE;
+}
+</code></pre>
+
+    <h3>6. <code>SDL_AppQuit</code> — clean up</h3>
+    <p>
+        SDL calls this once at shutdown. Destroy what we created, in reverse
+        order of creation. <strong>Do not</strong> call <code>SDL_Quit()</code>
+        yourself — the callback runtime does that for you after this function
+        returns.
+    </p>
+<pre><code class="language-cpp">void SDL_AppQuit(void *appstate, SDL_AppResult result)
+{
+    (void)result;
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+    if (st) {
+        SDL_DestroyRenderer(st-&gt;renderer);
+        SDL_DestroyWindow(st-&gt;window);
+        delete st;
+    }
+}
+</code></pre>
+
+    <div class="note">
+        <strong>Why a heap object?</strong> SDL stores a single <code>void*</code>
+        and threads it back into every callback. A heap-allocated
+        <code>AppState</code> gives that pointer something stable to point at
+        for the lifetime of the program — and skipping globals means the file
+        scales cleanly when state grows.
+    </div>
+</section>
+
+<section>
+    <h2>Complete listing</h2>
+    <p>
+        Drop this into
+        <a href="../../examples/cpp/callbacks.cpp">examples/cpp/callbacks.cpp</a>
+        (replacing its contents) and run <code>make run-cpp</code>.
+    </p>
+<pre><code class="language-cpp">/*
+ * 01-hello-window.cpp — the smallest legal SDL3 callback program.
+ */
+#define SDL_MAIN_USE_CALLBACKS 1
+#include &lt;SDL3/SDL.h&gt;
+#include &lt;SDL3/SDL_main.h&gt;
+
+struct AppState {
+    SDL_Window   *window   = nullptr;
+    SDL_Renderer *renderer = nullptr;
+};
+
+SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
+{
+    (void)argc; (void)argv;
+
+    SDL_SetAppMetadata("Hello Window", "1.0", "com.example.sdl3.hello");
+
+    if (!SDL_Init(SDL_INIT_VIDEO)) {
+        SDL_Log("SDL_Init failed: %s", SDL_GetError());
+        return SDL_APP_FAILURE;
+    }
+
+    AppState *st = new AppState();
+
+    if (!SDL_CreateWindowAndRenderer("Hello Window", 800, 600,
+                                     SDL_WINDOW_RESIZABLE,
+                                     &amp;st-&gt;window, &amp;st-&gt;renderer)) {
+        SDL_Log("SDL_CreateWindowAndRenderer failed: %s", SDL_GetError());
+        delete st;
+        return SDL_APP_FAILURE;
+    }
+    SDL_SetRenderVSync(st-&gt;renderer, 1);
+
+    *appstate = st;
+    return SDL_APP_CONTINUE;
+}
+
+SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *e)
+{
+    (void)appstate;
+    if (e-&gt;type == SDL_EVENT_QUIT) {
+        return SDL_APP_SUCCESS;
+    }
+    return SDL_APP_CONTINUE;
+}
+
+SDL_AppResult SDL_AppIterate(void *appstate)
+{
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+    SDL_SetRenderDrawColor(st-&gt;renderer, 18, 18, 28, 255);
+    SDL_RenderClear(st-&gt;renderer);
+    SDL_RenderPresent(st-&gt;renderer);
+    return SDL_APP_CONTINUE;
+}
+
+void SDL_AppQuit(void *appstate, SDL_AppResult result)
+{
+    (void)result;
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+    if (st) {
+        SDL_DestroyRenderer(st-&gt;renderer);
+        SDL_DestroyWindow(st-&gt;window);
+        delete st;
+    }
+}
+</code></pre>
+</section>
+
+<section>
+    <h2>Try it yourself</h2>
+    <ol>
+        <li>Change the clear colour to something garish — e.g. <code>SDL_SetRenderDrawColor(st-&gt;renderer, 220, 50, 200, 255)</code>. Convince yourself <code>SDL_AppIterate</code> really is running every frame.</li>
+        <li>Remove the <code>SDL_WINDOW_RESIZABLE</code> flag and observe that you can no longer drag the corner.</li>
+        <li>Change the window's initial size to <code>1280×720</code>. Notice how nothing else in the file needs to change — the renderer follows the window.</li>
+        <li>Log <code>"frame!"</code> inside <code>SDL_AppIterate</code> and confirm it prints at ~60 Hz on a 60 Hz display thanks to vsync.</li>
+    </ol>
+</section>
+
+<nav class="footnav">
+    <a href="index.html">← Track index</a>
+    <a href="index.html">Index</a>
+    <a href="02-drawing-primitives.html">Next: Drawing Primitives →</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+    <a href="../index.html">SDL3 Recipes</a> · <a href="index.html">2D Track</a> · Recipe 01
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-cpp.min.js"></script>
+</body>
+</html>

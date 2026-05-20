@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>07 · Collision Detection — 2D Track — SDL3 Recipes</title>
+    <link rel="stylesheet" href="../style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+</head>
+<body>
+
+<nav class="topnav">
+    <a href="../index.html">SDL3 Recipes</a> ›
+    <a href="index.html">2D Track</a> ›
+    <span>07. Collision Detection</span>
+</nav>
+
+<main>
+
+<header class="recipe-header">
+    <span class="badge badge-intermediate">Intermediate</span>
+    <h1>Recipe 07 — Collision Detection</h1>
+    <p class="tagline">
+        The three checks that cover 95% of 2D games: AABB vs AABB,
+        point-in-rect, and circle-vs-circle.
+    </p>
+</header>
+
+<section>
+    <h2>What you'll learn</h2>
+    <ul>
+        <li>Axis-aligned bounding box (AABB) intersection — the workhorse of 2D collision.</li>
+        <li>Why the "obvious" check has a single trick (separating axis on each side).</li>
+        <li>SDL3's built-in helpers (<code>SDL_HasRectIntersectionFloat</code>, <code>SDL_PointInRectFloat</code>) and when to skip them.</li>
+        <li>Circle-vs-circle with the squared-distance trick (no <code>sqrt</code>).</li>
+    </ul>
+</section>
+
+<section>
+    <h2>Prerequisites</h2>
+    <p><a href="04-delta-time.html">Recipe 04</a> for moving things, and any of recipes 02/05 for drawing them.</p>
+</section>
+
+<section>
+    <h2>Walkthrough</h2>
+
+    <h3>AABB vs AABB</h3>
+    <p>
+        An axis-aligned bounding box is a rectangle whose sides are parallel to
+        the screen. Two AABBs overlap if and only if they overlap on
+        <em>both</em> axes:
+    </p>
+<pre><code class="language-cpp">struct Rect { float x, y, w, h; };
+
+bool aabb_overlap(const Rect &amp;a, const Rect &amp;b)
+{
+    // Separating-axis test, one axis at a time.
+    if (a.x + a.w &lt;= b.x) return false;   // A is fully left of B
+    if (b.x + b.w &lt;= a.x) return false;   // B is fully left of A
+    if (a.y + a.h &lt;= b.y) return false;   // A is fully above B
+    if (b.y + b.h &lt;= a.y) return false;   // B is fully above A
+    return true;
+}
+</code></pre>
+    <p>
+        SDL3 has this built in if you use <code>SDL_FRect</code>:
+        <code>SDL_HasRectIntersectionFloat(&amp;a, &amp;b)</code>. Use it freely —
+        it's the same four comparisons. Hand-rolling matters only when your
+        rect type isn't <code>SDL_FRect</code> (e.g. has a centre + half-size).
+    </p>
+
+    <h3>Point in rect</h3>
+    <p>
+        A staple for mouse clicks on UI buttons. SDL ships
+        <code>SDL_PointInRectFloat</code>; the by-hand version:
+    </p>
+<pre><code class="language-cpp">bool point_in_rect(float px, float py, const Rect &amp;r)
+{
+    return px &gt;= r.x &amp;&amp; px &lt; r.x + r.w
+        &amp;&amp; py &gt;= r.y &amp;&amp; py &lt; r.y + r.h;
+}
+</code></pre>
+
+    <h3>Circle vs circle</h3>
+    <p>
+        Two circles overlap if the distance between their centres is less than
+        the sum of their radii. Skip the <code>sqrt</code> by comparing squared
+        distances — same answer, faster:
+    </p>
+<pre><code class="language-cpp">bool circles_overlap(float ax, float ay, float ar,
+                     float bx, float by, float br)
+{
+    float dx = ax - bx, dy = ay - by;
+    float rsum = ar + br;
+    return (dx * dx + dy * dy) &lt;= (rsum * rsum);
+}
+</code></pre>
+
+    <div class="note">
+        <strong>"Touching" vs "overlapping".</strong> Decide your edge case
+        deliberately: <code>&lt;</code> means "must overlap strictly",
+        <code>&lt;=</code> means "touching also counts." For most games it
+        doesn't matter; for physics, it does. Pick one and be consistent.
+    </div>
+</section>
+
+<section>
+    <h2>Complete listing</h2>
+    <p>
+        A box you steer with WASD, two static obstacles, and a roaming circle.
+        Anything you're colliding with this frame paints red.
+    </p>
+<pre><code class="language-cpp">/*
+ * 07-collision-detection.cpp — WASD a player rectangle around a scene;
+ * obstacles turn red when you touch them. A drifting circle does the
+ * same against a fixed circle.
+ */
+#define SDL_MAIN_USE_CALLBACKS 1
+#include &lt;SDL3/SDL.h&gt;
+#include &lt;SDL3/SDL_main.h&gt;
+#include "gfx.hpp"
+
+#include &lt;algorithm&gt;
+
+struct Rect { float x, y, w, h; };
+
+static bool aabb_overlap(const Rect &amp;a, const Rect &amp;b)
+{
+    if (a.x + a.w &lt;= b.x) return false;
+    if (b.x + b.w &lt;= a.x) return false;
+    if (a.y + a.h &lt;= b.y) return false;
+    if (b.y + b.h &lt;= a.y) return false;
+    return true;
+}
+
+struct AppState {
+    SDL_Window   *window   = nullptr;
+    SDL_Renderer *renderer = nullptr;
+    Uint64 prev_ns = 0;
+
+    Rect player   = { 100, 100, 40, 40 };
+    Rect obs1     = { 320, 180, 100, 60 };
+    Rect obs2     = { 500, 320,  80, 80 };
+
+    // Circle pair
+    float cax = 180, cay = 430, car = 26;        // drifts
+    float cbx = 520, cby = 470, cbr = 36;        // static
+    float cax_v = 90.0f;                          // px/sec
+};
+
+SDL_AppResult SDL_AppInit(void **appstate, int, char *[])
+{
+    SDL_SetAppMetadata("Collision Detection", "1.0", "com.example.sdl3.collide");
+    if (!SDL_Init(SDL_INIT_VIDEO)) { SDL_Log("%s", SDL_GetError()); return SDL_APP_FAILURE; }
+    AppState *st = new AppState();
+    if (!SDL_CreateWindowAndRenderer("Collision Detection", 800, 600,
+                                     SDL_WINDOW_RESIZABLE,
+                                     &amp;st-&gt;window, &amp;st-&gt;renderer)) {
+        SDL_Log("%s", SDL_GetError()); delete st; return SDL_APP_FAILURE;
+    }
+    SDL_SetRenderVSync(st-&gt;renderer, 1);
+    st-&gt;prev_ns = SDL_GetTicksNS();
+    *appstate = st;
+    return SDL_APP_CONTINUE;
+}
+
+SDL_AppResult SDL_AppEvent(void *, SDL_Event *e)
+{
+    if (e-&gt;type == SDL_EVENT_QUIT) return SDL_APP_SUCCESS;
+    if (e-&gt;type == SDL_EVENT_KEY_DOWN &amp;&amp; e-&gt;key.scancode == SDL_SCANCODE_ESCAPE) return SDL_APP_SUCCESS;
+    return SDL_APP_CONTINUE;
+}
+
+SDL_AppResult SDL_AppIterate(void *appstate)
+{
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+
+    Uint64 now_ns = SDL_GetTicksNS();
+    float dt = std::min((now_ns - st-&gt;prev_ns) / 1.0e9f, 0.05f);
+    st-&gt;prev_ns = now_ns;
+
+    // WASD moves the player.
+    const bool *keys = SDL_GetKeyboardState(nullptr);
+    const float v = 260.0f;
+    if (keys[SDL_SCANCODE_A]) st-&gt;player.x -= v * dt;
+    if (keys[SDL_SCANCODE_D]) st-&gt;player.x += v * dt;
+    if (keys[SDL_SCANCODE_W]) st-&gt;player.y -= v * dt;
+    if (keys[SDL_SCANCODE_S]) st-&gt;player.y += v * dt;
+
+    // The drifting circle bounces between x=120 and x=380.
+    st-&gt;cax += st-&gt;cax_v * dt;
+    if (st-&gt;cax &lt; 120 || st-&gt;cax &gt; 380) st-&gt;cax_v = -st-&gt;cax_v;
+
+    bool hit1 = aabb_overlap(st-&gt;player, st-&gt;obs1);
+    bool hit2 = aabb_overlap(st-&gt;player, st-&gt;obs2);
+
+    float dx = st-&gt;cax - st-&gt;cbx, dy = st-&gt;cay - st-&gt;cby;
+    float rsum = st-&gt;car + st-&gt;cbr;
+    bool circle_hit = (dx*dx + dy*dy) &lt;= (rsum * rsum);
+
+    gfx::clear(st-&gt;renderer, 18, 18, 28);
+
+    // Obstacles: red if colliding, otherwise the usual amber.
+    gfx::set_color(st-&gt;renderer, hit1 ? 255 : 255, hit1 ? 80  : 200, hit1 ? 80  : 60, 255);
+    gfx::fill_rect(st-&gt;renderer, st-&gt;obs1.x, st-&gt;obs1.y, st-&gt;obs1.w, st-&gt;obs1.h);
+    gfx::set_color(st-&gt;renderer, hit2 ? 255 : 60,  hit2 ? 80  : 200, hit2 ? 80  : 120, 255);
+    gfx::fill_rect(st-&gt;renderer, st-&gt;obs2.x, st-&gt;obs2.y, st-&gt;obs2.w, st-&gt;obs2.h);
+
+    // Player.
+    gfx::set_color(st-&gt;renderer, 120, 200, 255, 255);
+    gfx::fill_rect(st-&gt;renderer, st-&gt;player.x, st-&gt;player.y, st-&gt;player.w, st-&gt;player.h);
+
+    // Circles.
+    gfx::set_color(st-&gt;renderer, circle_hit ? 255 : 255, circle_hit ? 80 : 120, circle_hit ? 80 : 200, 255);
+    gfx::fill_circle(st-&gt;renderer, st-&gt;cax, st-&gt;cay, st-&gt;car);
+    gfx::set_color(st-&gt;renderer, circle_hit ? 255 :  60, circle_hit ? 80 : 200, circle_hit ? 80 : 200, 255);
+    gfx::fill_circle(st-&gt;renderer, st-&gt;cbx, st-&gt;cby, st-&gt;cbr);
+
+    SDL_RenderPresent(st-&gt;renderer);
+    return SDL_APP_CONTINUE;
+}
+
+void SDL_AppQuit(void *appstate, SDL_AppResult)
+{
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+    if (st) {
+        SDL_DestroyRenderer(st-&gt;renderer);
+        SDL_DestroyWindow(st-&gt;window);
+        delete st;
+    }
+}
+</code></pre>
+</section>
+
+<section>
+    <h2>Try it yourself</h2>
+    <ol>
+        <li>Replace <code>aabb_overlap</code> with <code>SDL_HasRectIntersectionFloat</code> — convert <code>Rect</code> to <code>SDL_FRect</code> first (same field order, so a <code>reinterpret_cast</code> works in practice; use a tiny conversion function in production).</li>
+        <li>Add response: when the player overlaps an obstacle, push it back by the smaller of the X / Y penetrations. This is the simplest "solid wall" behaviour.</li>
+        <li>Replace circle-vs-circle with circle-vs-rect: find the rect's closest point to the circle's centre, then compare its distance to the radius.</li>
+        <li>Spawn 50 small drifting boxes and call <code>aabb_overlap</code> for every pair. Confirm the cost is O(N²) — the motivation for spatial partitioning later.</li>
+    </ol>
+</section>
+
+<nav class="footnav">
+    <a href="06-sprite-animation.html">← 06. Sprite Animation</a>
+    <a href="index.html">Index</a>
+    <a href="08-audio-basics.html">Next: Audio Basics →</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+    <a href="../index.html">SDL3 Recipes</a> · <a href="index.html">2D Track</a> · Recipe 07
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-cpp.min.js"></script>
+</body>
+</html>

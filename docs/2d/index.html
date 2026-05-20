@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>2D Track — SDL3 Recipes</title>
+    <meta name="description" content="Twelve C++ callback-style SDL3 recipes for 2D games, using SDL_Renderer. Beginner to advanced.">
+    <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<nav class="topnav">
+    <a href="../index.html">SDL3 Recipes</a> ›
+    <span>2D Track</span>
+</nav>
+
+<main>
+
+<header class="hero">
+    <h1>2D Track</h1>
+    <p class="lede">
+        Twelve recipes that take you from opening a window to shipping a
+        playable Pong clone, all in C++ with SDL3's callback model and the
+        high-level <code>SDL_Renderer</code> drawing API. Each one builds on
+        the previous — work through them in order.
+    </p>
+</header>
+
+<section>
+    <h2>Curriculum</h2>
+    <ul class="recipe-list">
+
+        <li>
+            <span class="num">01</span>
+            <span class="title">
+                <a href="01-hello-window.html">Hello Window</a>
+                <div class="blurb">The four <code>SDL_App*</code> callbacks, opening a window, clearing the screen.</div>
+            </span>
+            <span class="badge badge-beginner">Beginner</span>
+        </li>
+
+        <li>
+            <span class="num">02</span>
+            <span class="title">
+                <a href="02-drawing-primitives.html">Drawing Primitives</a>
+                <div class="blurb">Set-then-draw colour model, rectangles, lines, points, the <code>gfx::</code> helpers.</div>
+            </span>
+            <span class="badge badge-beginner">Beginner</span>
+        </li>
+
+        <li>
+            <span class="num">03</span>
+            <span class="title">
+                <a href="03-handling-input.html">Handling Input</a>
+                <div class="blurb">Keyboard and mouse events inside <code>SDL_AppEvent</code>; quitting cleanly.</div>
+            </span>
+            <span class="badge badge-beginner">Beginner</span>
+        </li>
+
+        <li>
+            <span class="num">04</span>
+            <span class="title">
+                <a href="04-delta-time.html">Delta Time &amp; Movement</a>
+                <div class="blurb">Frame-rate-independent motion with <code>SDL_GetTicksNS</code>.</div>
+            </span>
+            <span class="badge badge-beginner">Beginner</span>
+        </li>
+
+        <li>
+            <span class="num">05</span>
+            <span class="title">
+                <a href="05-loading-textures.html">Loading Textures</a>
+                <div class="blurb">Surfaces, textures, BMP loading, source/destination rects.</div>
+            </span>
+            <span class="badge badge-intermediate">Intermediate</span>
+        </li>
+
+        <li>
+            <span class="num">06</span>
+            <span class="title">
+                <a href="06-sprite-animation.html">Sprite Animation</a>
+                <div class="blurb">Sprite sheets, frame timers, source-rect cycling.</div>
+            </span>
+            <span class="badge badge-intermediate">Intermediate</span>
+        </li>
+
+        <li>
+            <span class="num">07</span>
+            <span class="title">
+                <a href="07-collision-detection.html">Collision Detection</a>
+                <div class="blurb">AABB intersection, point-in-rect, circle-circle distance checks.</div>
+            </span>
+            <span class="badge badge-intermediate">Intermediate</span>
+        </li>
+
+        <li>
+            <span class="num">08</span>
+            <span class="title">
+                <a href="08-audio-basics.html">Audio Basics</a>
+                <div class="blurb">Loading a WAV with <code>SDL_LoadWAV</code>, audio streams, one-shot effects.</div>
+            </span>
+            <span class="badge badge-intermediate">Intermediate</span>
+        </li>
+
+        <li>
+            <span class="num">09</span>
+            <span class="title">
+                <a href="09-text-rendering.html">Text Rendering</a>
+                <div class="blurb">A dependency-free bitmap-font approach — draw characters from a sprite sheet.</div>
+            </span>
+            <span class="badge badge-intermediate">Intermediate</span>
+        </li>
+
+        <li>
+            <span class="num">10</span>
+            <span class="title">
+                <a href="10-tilemap-rendering.html">Tilemap Rendering</a>
+                <div class="blurb">A 2D grid + tileset, scrolling camera, viewport-culled drawing.</div>
+            </span>
+            <span class="badge badge-advanced">Advanced</span>
+        </li>
+
+        <li>
+            <span class="num">11</span>
+            <span class="title">
+                <a href="11-particle-systems.html">Particle Systems</a>
+                <div class="blurb">A pool of particles with lifetime, velocity, fade; spawn-update-cull.</div>
+            </span>
+            <span class="badge badge-advanced">Advanced</span>
+        </li>
+
+        <li>
+            <span class="num">12</span>
+            <span class="title">
+                <a href="12-mini-game-pong.html">Mini Game: Pong</a>
+                <div class="blurb">Capstone — paddles, ball, scoring, simple AI. Everything from 01–11 in one file.</div>
+            </span>
+            <span class="badge badge-advanced">Advanced</span>
+        </li>
+
+    </ul>
+</section>
+
+<section>
+    <h2>How to run the code</h2>
+    <p>
+        Every recipe's <em>Complete listing</em> is a drop-in replacement for
+        <a href="../../examples/cpp/callbacks.cpp">examples/cpp/callbacks.cpp</a>.
+        Replace that file's contents, then build with <code>make run-cpp</code>
+        from the repo root. The recipe will compile against the existing
+        <a href="../../examples/cpp/gfx.hpp">gfx.hpp</a> / <code>gfx.cpp</code>
+        in that folder.
+    </p>
+    <p>
+        New to the build setup? See the
+        <a href="../../README.md">root README</a>.
+    </p>
+</section>
+
+<nav class="footnav">
+    <a href="../index.html">← All tracks</a>
+    <span></span>
+    <a href="01-hello-window.html">Start with Recipe 01 →</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+    <a href="../index.html">SDL3 Recipes</a> · 2D Track ·
+    <a href="../3d/index.html">Jump to 3D Track →</a>
+</footer>
+
+</body>
+</html>

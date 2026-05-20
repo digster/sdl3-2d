@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>05 · Loading Textures — 2D Track — SDL3 Recipes</title>
+    <link rel="stylesheet" href="../style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+</head>
+<body>
+
+<nav class="topnav">
+    <a href="../index.html">SDL3 Recipes</a> ›
+    <a href="index.html">2D Track</a> ›
+    <span>05. Loading Textures</span>
+</nav>
+
+<main>
+
+<header class="recipe-header">
+    <span class="badge badge-intermediate">Intermediate</span>
+    <h1>Recipe 05 — Loading Textures</h1>
+    <p class="tagline">
+        From shapes to images. Load a BMP, upload it to the GPU as a texture,
+        and draw it — with the source/destination rect distinction explained.
+    </p>
+</header>
+
+<section>
+    <h2>What you'll learn</h2>
+    <ul>
+        <li>What an <code>SDL_Surface</code> is vs an <code>SDL_Texture</code>, and why both exist.</li>
+        <li>How to load a BMP with <code>SDL_LoadBMP</code> and upload it with <code>SDL_CreateTextureFromSurface</code>.</li>
+        <li>The role of <code>src</code> (where in the image) and <code>dst</code> (where on screen) rects in <code>SDL_RenderTexture</code>.</li>
+        <li>Why you free the surface immediately after uploading.</li>
+    </ul>
+</section>
+
+<section>
+    <h2>Prerequisites</h2>
+    <p><a href="04-delta-time.html">Recipe 04 — Delta Time &amp; Movement</a>.</p>
+</section>
+
+<section>
+    <h2>Walkthrough</h2>
+
+    <h3>Surfaces and textures</h3>
+    <p>
+        An <code>SDL_Surface</code> is a CPU-side pixel buffer — plain RAM you
+        can poke. An <code>SDL_Texture</code> is the GPU-side equivalent —
+        memory the renderer can sample at hardware speed. You load images into
+        surfaces, then upload to textures for fast drawing. After upload, the
+        surface is no longer needed.
+    </p>
+    <p>
+        SDL3 ships <code>SDL_LoadBMP</code> for BMP files only — no PNG, no JPG.
+        That sounds restrictive but it keeps the dependency story honest:
+        nothing extra to install. Most starter projects either convert their
+        sprites to BMP or pull in <code>SDL_image</code> later for PNG/JPG.
+    </p>
+
+    <h3>Loading at startup</h3>
+<pre><code class="language-cpp">// Inside SDL_AppInit, after creating the renderer.
+SDL_Surface *surf = SDL_LoadBMP("assets/player.bmp");
+if (!surf) {
+    SDL_Log("LoadBMP failed: %s", SDL_GetError());
+    return SDL_APP_FAILURE;
+}
+
+// Optional: declare a colour-key so a magenta background becomes transparent.
+SDL_SetSurfaceColorKey(surf, true, SDL_MapSurfaceRGB(surf, 255, 0, 255));
+
+st-&gt;player_tex = SDL_CreateTextureFromSurface(st-&gt;renderer, surf);
+SDL_DestroySurface(surf);                    // surface no longer needed
+if (!st-&gt;player_tex) {
+    SDL_Log("CreateTextureFromSurface: %s", SDL_GetError());
+    return SDL_APP_FAILURE;
+}
+
+// Remember the dimensions for later.
+SDL_GetTextureSize(st-&gt;player_tex, &amp;st-&gt;player_w, &amp;st-&gt;player_h);
+</code></pre>
+
+    <h3>Drawing the texture</h3>
+    <p>
+        <code>SDL_RenderTexture</code> takes three rects: the source (which part
+        of the texture to sample), the destination (where on screen, including
+        scale), or <code>NULL</code> for either to mean "the whole thing":
+    </p>
+<pre><code class="language-cpp">// Full image at (200, 150), original size.
+SDL_FRect dst = { 200.0f, 150.0f, st-&gt;player_w, st-&gt;player_h };
+SDL_RenderTexture(st-&gt;renderer, st-&gt;player_tex, /*src=*/nullptr, &amp;dst);
+
+// Same image, scaled 2x on screen.
+SDL_FRect dst2 = { 400.0f, 150.0f, st-&gt;player_w * 2, st-&gt;player_h * 2 };
+SDL_RenderTexture(st-&gt;renderer, st-&gt;player_tex, nullptr, &amp;dst2);
+
+// Just the top-left 32x32 region, drawn at 600,150.
+SDL_FRect src  = { 0, 0, 32, 32 };
+SDL_FRect dst3 = { 600, 150, 32, 32 };
+SDL_RenderTexture(st-&gt;renderer, st-&gt;player_tex, &amp;src, &amp;dst3);
+</code></pre>
+
+    <h3>Clean up</h3>
+    <p>
+        In <code>SDL_AppQuit</code>, free the texture before destroying the
+        renderer (textures belong to a specific renderer):
+    </p>
+<pre><code class="language-cpp">SDL_DestroyTexture(st-&gt;player_tex);
+SDL_DestroyRenderer(st-&gt;renderer);
+SDL_DestroyWindow(st-&gt;window);
+</code></pre>
+
+    <div class="note">
+        <strong>No BMP yet?</strong> The complete listing below renders a small
+        procedurally-generated checker texture so you can run the recipe with
+        zero asset files. Swap in <code>SDL_LoadBMP("yourfile.bmp")</code> when
+        you have one.
+    </div>
+</section>
+
+<section>
+    <h2>Complete listing</h2>
+    <p>This version builds a 64×64 checkerboard surface in code, then uploads it — no asset file needed.</p>
+<pre><code class="language-cpp">/*
+ * 05-loading-textures.cpp — a procedurally-built checker texture,
+ * drawn in three places at three sizes.
+ */
+#define SDL_MAIN_USE_CALLBACKS 1
+#include &lt;SDL3/SDL.h&gt;
+#include &lt;SDL3/SDL_main.h&gt;
+#include "gfx.hpp"
+
+struct AppState {
+    SDL_Window   *window   = nullptr;
+    SDL_Renderer *renderer = nullptr;
+    SDL_Texture  *tex      = nullptr;
+    float tw = 0, th = 0;
+};
+
+/* Build a 64x64 checker pattern, upload it, return the texture. */
+static SDL_Texture *make_checker(SDL_Renderer *r)
+{
+    const int W = 64, H = 64, CELL = 8;
+    SDL_Surface *s = SDL_CreateSurface(W, H, SDL_PIXELFORMAT_RGBA32);
+    if (!s) return nullptr;
+
+    Uint32 *px = static_cast&lt;Uint32 *&gt;(s-&gt;pixels);
+    const SDL_PixelFormatDetails *pfd = SDL_GetPixelFormatDetails(s-&gt;format);
+    for (int y = 0; y &lt; H; ++y) {
+        for (int x = 0; x &lt; W; ++x) {
+            bool on = ((x / CELL) + (y / CELL)) % 2 == 0;
+            Uint8 v = on ? 230 : 60;
+            px[y * (s-&gt;pitch / 4) + x] = SDL_MapRGBA(pfd, nullptr, v, v, v, 255);
+        }
+    }
+    SDL_Texture *t = SDL_CreateTextureFromSurface(r, s);
+    SDL_DestroySurface(s);
+    return t;
+}
+
+SDL_AppResult SDL_AppInit(void **appstate, int, char *[])
+{
+    SDL_SetAppMetadata("Loading Textures", "1.0", "com.example.sdl3.tex");
+    if (!SDL_Init(SDL_INIT_VIDEO)) { SDL_Log("%s", SDL_GetError()); return SDL_APP_FAILURE; }
+    AppState *st = new AppState();
+    if (!SDL_CreateWindowAndRenderer("Loading Textures", 800, 600,
+                                     SDL_WINDOW_RESIZABLE,
+                                     &amp;st-&gt;window, &amp;st-&gt;renderer)) {
+        SDL_Log("%s", SDL_GetError()); delete st; return SDL_APP_FAILURE;
+    }
+    SDL_SetRenderVSync(st-&gt;renderer, 1);
+
+    st-&gt;tex = make_checker(st-&gt;renderer);
+    if (!st-&gt;tex) { SDL_Log("checker: %s", SDL_GetError()); delete st; return SDL_APP_FAILURE; }
+    SDL_GetTextureSize(st-&gt;tex, &amp;st-&gt;tw, &amp;st-&gt;th);
+
+    *appstate = st;
+    return SDL_APP_CONTINUE;
+}
+
+SDL_AppResult SDL_AppEvent(void *, SDL_Event *e)
+{
+    if (e-&gt;type == SDL_EVENT_QUIT) return SDL_APP_SUCCESS;
+    if (e-&gt;type == SDL_EVENT_KEY_DOWN &amp;&amp; e-&gt;key.scancode == SDL_SCANCODE_ESCAPE) return SDL_APP_SUCCESS;
+    return SDL_APP_CONTINUE;
+}
+
+SDL_AppResult SDL_AppIterate(void *appstate)
+{
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+
+    gfx::clear(st-&gt;renderer, 18, 18, 28);
+
+    // 1) Whole texture at original size.
+    SDL_FRect dst1 = { 80,  120, st-&gt;tw, st-&gt;th };
+    SDL_RenderTexture(st-&gt;renderer, st-&gt;tex, nullptr, &amp;dst1);
+
+    // 2) Same texture, drawn 3x larger.
+    SDL_FRect dst2 = { 220, 120, st-&gt;tw * 3, st-&gt;th * 3 };
+    SDL_RenderTexture(st-&gt;renderer, st-&gt;tex, nullptr, &amp;dst2);
+
+    // 3) Just the top-left quarter, drawn at 2x.
+    SDL_FRect src  = { 0, 0, st-&gt;tw / 2, st-&gt;th / 2 };
+    SDL_FRect dst3 = { 520, 120, st-&gt;tw, st-&gt;th };
+    SDL_RenderTexture(st-&gt;renderer, st-&gt;tex, &amp;src, &amp;dst3);
+
+    SDL_RenderPresent(st-&gt;renderer);
+    return SDL_APP_CONTINUE;
+}
+
+void SDL_AppQuit(void *appstate, SDL_AppResult)
+{
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+    if (st) {
+        if (st-&gt;tex) SDL_DestroyTexture(st-&gt;tex);
+        SDL_DestroyRenderer(st-&gt;renderer);
+        SDL_DestroyWindow(st-&gt;window);
+        delete st;
+    }
+}
+</code></pre>
+</section>
+
+<section>
+    <h2>Try it yourself</h2>
+    <ol>
+        <li>Save a 64×64 BMP to <code>assets/sprite.bmp</code> (relative to where the binary runs) and replace <code>make_checker</code> with <code>SDL_LoadBMP</code>.</li>
+        <li>Try <code>SDL_SetTextureScaleMode(st-&gt;tex, SDL_SCALEMODE_LINEAR)</code> — the upscaled checker now blurs instead of staying crisp. <code>SDL_SCALEMODE_NEAREST</code> (the default) is what you want for pixel art.</li>
+        <li>Apply a tint with <code>SDL_SetTextureColorMod(st-&gt;tex, 255, 80, 80)</code> — the texture's grey checkers turn red.</li>
+        <li>Make a non-rectangular sprite: add a magenta border to your BMP and call <code>SDL_SetSurfaceColorKey</code> on the surface before uploading.</li>
+    </ol>
+</section>
+
+<nav class="footnav">
+    <a href="04-delta-time.html">← 04. Delta Time</a>
+    <a href="index.html">Index</a>
+    <a href="06-sprite-animation.html">Next: Sprite Animation →</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+    <a href="../index.html">SDL3 Recipes</a> · <a href="index.html">2D Track</a> · Recipe 05
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-cpp.min.js"></script>
+</body>
+</html>

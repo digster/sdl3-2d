@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>01 · Hello Triangle — 3D Track — SDL3 Recipes</title>
+    <link rel="stylesheet" href="../style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+</head>
+<body>
+
+<nav class="topnav">
+    <a href="../index.html">SDL3 Recipes</a> ›
+    <a href="index.html">3D Track</a> ›
+    <span>01. Hello Triangle</span>
+</nav>
+
+<main>
+
+<header class="recipe-header">
+    <span class="badge badge-beginner">Beginner</span>
+    <h1>Recipe 01 — Hello Triangle</h1>
+    <p class="tagline">
+        The smallest legal <code>SDL_GPU</code> program. A device, two shaders,
+        a pipeline, and one rasterised triangle.
+    </p>
+</header>
+
+<section>
+    <h2>What you'll learn</h2>
+    <ul>
+        <li>What <code>SDL_GPU</code> is and how it differs from <code>SDL_Renderer</code>.</li>
+        <li>The four-step setup: device → window → shaders → pipeline.</li>
+        <li>The per-frame command sequence: acquire command buffer → acquire swapchain → render pass → submit.</li>
+        <li>The <code>[[vertex_id]]</code> trick — drawing without any vertex buffer at all.</li>
+        <li>Why a NULL swapchain texture is normal, not an error.</li>
+    </ul>
+</section>
+
+<section>
+    <h2>Prerequisites</h2>
+    <p>
+        SDL3 installed and <code>make run-gpu</code> already working with the
+        repo's existing triangle. Comfortable with the 2D-track callback model
+        (<a href="../2d/01-hello-window.html">2D recipe 01</a>) — this recipe
+        reuses the same <code>SDL_App*</code> skeleton.
+    </p>
+</section>
+
+<section>
+    <h2>Walkthrough</h2>
+
+    <h3>Why SDL_GPU exists</h3>
+    <p>
+        <code>SDL_Renderer</code> is high-level: you ask for a rectangle, SDL
+        figures out how. <code>SDL_GPU</code> is a tier lower: you describe a
+        graphics pipeline explicitly — shaders, vertex layout, blend state —
+        and SDL maps that description to Metal (macOS), Vulkan (Linux), or
+        D3D12 (Windows). The two are mutually exclusive on the same window.
+    </p>
+    <p>
+        The repo's existing
+        <a href="../../examples/cpp-gpu/triangle.cpp">examples/cpp-gpu/triangle.cpp</a>
+        is exactly this recipe — read it side by side with the listing below.
+    </p>
+
+    <h3>The two shaders</h3>
+    <p>
+        A graphics pipeline always has at least two stages: a <strong>vertex
+        shader</strong> (runs per vertex, outputs a clip-space position) and a
+        <strong>fragment shader</strong> (runs per pixel, outputs a colour).
+        We'll embed them as MSL source strings — the Metal backend compiles
+        them at runtime, so no offline tools are needed.
+    </p>
+<pre><code class="language-cpp">static const char *kVS = R"msl(
+#include &lt;metal_stdlib&gt;
+using namespace metal;
+
+struct VSOut {
+    float4 position [[position]];   // required: clip-space
+    float4 color;                   // smuggled into the fragment stage
+};
+
+vertex VSOut vertexMain(uint vid [[vertex_id]])
+{
+    // Three corners baked into the shader. No vertex buffer needed.
+    const float2 P[3] = { float2( 0.0,  0.5),
+                          float2(-0.5, -0.5),
+                          float2( 0.5, -0.5) };
+    const float3 C[3] = { float3(1,0,0), float3(0,1,0), float3(0,0,1) };
+
+    VSOut o;
+    o.position = float4(P[vid], 0.0, 1.0);
+    o.color    = float4(C[vid], 1.0);
+    return o;
+}
+)msl";
+
+static const char *kFS = R"msl(
+#include &lt;metal_stdlib&gt;
+using namespace metal;
+
+struct VSOut { float4 position [[position]]; float4 color; };
+
+fragment float4 fragmentMain(VSOut in [[stage_in]]) { return in.color; }
+)msl";
+</code></pre>
+    <p>
+        The rasterizer interpolates the per-vertex <code>color</code> across
+        the triangle's face, so a pixel halfway between the red and green
+        corners arrives at the fragment shader already yellow.
+    </p>
+
+    <h3>Init: device, window, shaders, pipeline</h3>
+<pre><code class="language-cpp">// 1. GPU device — we promise to supply MSL shaders.
+st-&gt;device = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_MSL,
+                                 /*debug=*/true, /*name=*/nullptr);
+
+// 2. A plain window (no SDL_Renderer here).
+st-&gt;window = SDL_CreateWindow("Hello Triangle", 800, 600, SDL_WINDOW_RESIZABLE);
+
+// 3. Bind window to device — creates the swapchain.
+SDL_ClaimWindowForGPUDevice(st-&gt;device, st-&gt;window);
+
+// 4. Compile the two shaders.
+SDL_GPUShaderCreateInfo vsi{};
+vsi.code       = (const Uint8 *)kVS;
+vsi.code_size  = std::strlen(kVS);
+vsi.entrypoint = "vertexMain";
+vsi.format     = SDL_GPU_SHADERFORMAT_MSL;
+vsi.stage      = SDL_GPU_SHADERSTAGE_VERTEX;
+SDL_GPUShader *vs = SDL_CreateGPUShader(st-&gt;device, &amp;vsi);
+
+SDL_GPUShaderCreateInfo fsi{};
+fsi.code       = (const Uint8 *)kFS;
+fsi.code_size  = std::strlen(kFS);
+fsi.entrypoint = "fragmentMain";
+fsi.format     = SDL_GPU_SHADERFORMAT_MSL;
+fsi.stage      = SDL_GPU_SHADERSTAGE_FRAGMENT;
+SDL_GPUShader *fs = SDL_CreateGPUShader(st-&gt;device, &amp;fsi);
+
+// 5. Build the pipeline — the immutable "how to draw" description.
+SDL_GPUColorTargetDescription ct{};
+ct.format = SDL_GetGPUSwapchainTextureFormat(st-&gt;device, st-&gt;window);
+
+SDL_GPUGraphicsPipelineCreateInfo pci{};
+pci.vertex_shader   = vs;
+pci.fragment_shader = fs;
+pci.primitive_type  = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+pci.target_info.color_target_descriptions = &amp;ct;
+pci.target_info.num_color_targets         = 1;
+
+st-&gt;pipeline = SDL_CreateGPUGraphicsPipeline(st-&gt;device, &amp;pci);
+
+// Pipeline owns its compiled stages; we can release the standalone shaders now.
+SDL_ReleaseGPUShader(st-&gt;device, vs);
+SDL_ReleaseGPUShader(st-&gt;device, fs);
+</code></pre>
+
+    <h3>Per-frame: command buffer → render pass → submit</h3>
+<pre><code class="language-cpp">SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(st-&gt;device);
+
+SDL_GPUTexture *swap = nullptr;
+Uint32 sw = 0, sh = 0;
+SDL_WaitAndAcquireGPUSwapchainTexture(cmd, st-&gt;window, &amp;swap, &amp;sw, &amp;sh);
+
+if (swap) {                              // NULL is normal (minimized / no display)
+    SDL_GPUColorTargetInfo cti{};
+    cti.texture     = swap;
+    cti.clear_color = SDL_FColor{ 0.07f, 0.07f, 0.10f, 1.0f };
+    cti.load_op     = SDL_GPU_LOADOP_CLEAR;
+    cti.store_op    = SDL_GPU_STOREOP_STORE;
+
+    SDL_GPURenderPass *pass = SDL_BeginGPURenderPass(cmd, &amp;cti, 1, nullptr);
+    SDL_BindGPUGraphicsPipeline(pass, st-&gt;pipeline);
+    SDL_DrawGPUPrimitives(pass, /*num_vertices=*/3, /*num_instances=*/1, 0, 0);
+    SDL_EndGPURenderPass(pass);
+}
+
+SDL_SubmitGPUCommandBuffer(cmd);          // also presents the frame (if non-NULL swap)
+</code></pre>
+
+    <div class="warn">
+        <strong>NULL swapchain is normal.</strong>
+        <code>SDL_WaitAndAcquireGPUSwapchainTexture</code> can return
+        <code>true</code> (success) yet hand back a <code>NULL</code> texture
+        — the window is occluded/minimized, or there's no display at all (CI).
+        Skip drawing, still submit the empty command buffer, carry on.
+    </div>
+</section>
+
+<section>
+    <h2>Complete listing</h2>
+    <p>
+        This is essentially the repo's existing
+        <a href="../../examples/cpp-gpu/triangle.cpp">triangle.cpp</a> — open
+        it for the most thoroughly commented version. The listing below is the
+        same code with the comments trimmed for compactness.
+    </p>
+<pre><code class="language-cpp">/*
+ * 3d/01-hello-triangle.cpp — minimal SDL_GPU pipeline that rasterises one
+ * RGB-cornered triangle. See examples/cpp-gpu/triangle.cpp for the
+ * full-commented version.
+ */
+#define SDL_MAIN_USE_CALLBACKS 1
+#include &lt;SDL3/SDL.h&gt;
+#include &lt;SDL3/SDL_main.h&gt;
+
+#include &lt;cstring&gt;
+
+static const char *kVS = R"msl(
+#include &lt;metal_stdlib&gt;
+using namespace metal;
+struct VSOut { float4 position [[position]]; float4 color; };
+vertex VSOut vertexMain(uint vid [[vertex_id]]) {
+    const float2 P[3] = { float2(0.0, 0.5), float2(-0.5,-0.5), float2(0.5,-0.5) };
+    const float3 C[3] = { float3(1,0,0), float3(0,1,0), float3(0,0,1) };
+    VSOut o;
+    o.position = float4(P[vid], 0.0, 1.0);
+    o.color    = float4(C[vid], 1.0);
+    return o;
+}
+)msl";
+
+static const char *kFS = R"msl(
+#include &lt;metal_stdlib&gt;
+using namespace metal;
+struct VSOut { float4 position [[position]]; float4 color; };
+fragment float4 fragmentMain(VSOut in [[stage_in]]) { return in.color; }
+)msl";
+
+struct AppState {
+    SDL_Window              *window   = nullptr;
+    SDL_GPUDevice           *device   = nullptr;
+    SDL_GPUGraphicsPipeline *pipeline = nullptr;
+};
+
+static SDL_AppResult fail(const char *what) { SDL_Log("%s: %s", what, SDL_GetError()); return SDL_APP_FAILURE; }
+
+SDL_AppResult SDL_AppInit(void **appstate, int, char *[])
+{
+    SDL_SetAppMetadata("Hello Triangle", "1.0", "com.example.sdl3.tri");
+    if (!SDL_Init(SDL_INIT_VIDEO)) return fail("SDL_Init");
+
+    AppState *st = new AppState(); *appstate = st;
+
+    st-&gt;device = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_MSL, true, nullptr);
+    if (!st-&gt;device) return fail("CreateGPUDevice");
+
+    st-&gt;window = SDL_CreateWindow("Hello Triangle", 800, 600, SDL_WINDOW_RESIZABLE);
+    if (!st-&gt;window) return fail("CreateWindow");
+
+    if (!SDL_ClaimWindowForGPUDevice(st-&gt;device, st-&gt;window)) return fail("ClaimWindowForGPUDevice");
+
+    SDL_GPUShaderCreateInfo vsi{};
+    vsi.code = (const Uint8 *)kVS; vsi.code_size = std::strlen(kVS);
+    vsi.entrypoint = "vertexMain";
+    vsi.format = SDL_GPU_SHADERFORMAT_MSL; vsi.stage = SDL_GPU_SHADERSTAGE_VERTEX;
+    SDL_GPUShader *vs = SDL_CreateGPUShader(st-&gt;device, &amp;vsi);
+    if (!vs) return fail("CreateGPUShader vs");
+
+    SDL_GPUShaderCreateInfo fsi{};
+    fsi.code = (const Uint8 *)kFS; fsi.code_size = std::strlen(kFS);
+    fsi.entrypoint = "fragmentMain";
+    fsi.format = SDL_GPU_SHADERFORMAT_MSL; fsi.stage = SDL_GPU_SHADERSTAGE_FRAGMENT;
+    SDL_GPUShader *fs = SDL_CreateGPUShader(st-&gt;device, &amp;fsi);
+    if (!fs) { SDL_ReleaseGPUShader(st-&gt;device, vs); return fail("CreateGPUShader fs"); }
+
+    SDL_GPUColorTargetDescription ct{};
+    ct.format = SDL_GetGPUSwapchainTextureFormat(st-&gt;device, st-&gt;window);
+
+    SDL_GPUGraphicsPipelineCreateInfo pci{};
+    pci.vertex_shader = vs; pci.fragment_shader = fs;
+    pci.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+    pci.target_info.color_target_descriptions = &amp;ct;
+    pci.target_info.num_color_targets = 1;
+
+    st-&gt;pipeline = SDL_CreateGPUGraphicsPipeline(st-&gt;device, &amp;pci);
+    SDL_ReleaseGPUShader(st-&gt;device, vs);
+    SDL_ReleaseGPUShader(st-&gt;device, fs);
+    if (!st-&gt;pipeline) return fail("CreateGPUGraphicsPipeline");
+
+    return SDL_APP_CONTINUE;
+}
+
+SDL_AppResult SDL_AppEvent(void *, SDL_Event *e)
+{
+    if (e-&gt;type == SDL_EVENT_QUIT) return SDL_APP_SUCCESS;
+    if (e-&gt;type == SDL_EVENT_KEY_DOWN &amp;&amp; e-&gt;key.scancode == SDL_SCANCODE_ESCAPE) return SDL_APP_SUCCESS;
+    return SDL_APP_CONTINUE;
+}
+
+SDL_AppResult SDL_AppIterate(void *appstate)
+{
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+
+    SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(st-&gt;device);
+    if (!cmd) return fail("AcquireGPUCommandBuffer");
+
+    SDL_GPUTexture *swap = nullptr;
+    Uint32 sw = 0, sh = 0;
+    if (!SDL_WaitAndAcquireGPUSwapchainTexture(cmd, st-&gt;window, &amp;swap, &amp;sw, &amp;sh))
+        return fail("WaitAndAcquireGPUSwapchainTexture");
+
+    if (swap) {
+        SDL_GPUColorTargetInfo cti{};
+        cti.texture     = swap;
+        cti.clear_color = SDL_FColor{ 0.07f, 0.07f, 0.10f, 1.0f };
+        cti.load_op     = SDL_GPU_LOADOP_CLEAR;
+        cti.store_op    = SDL_GPU_STOREOP_STORE;
+        SDL_GPURenderPass *pass = SDL_BeginGPURenderPass(cmd, &amp;cti, 1, nullptr);
+        SDL_BindGPUGraphicsPipeline(pass, st-&gt;pipeline);
+        SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
+        SDL_EndGPURenderPass(pass);
+    }
+    SDL_SubmitGPUCommandBuffer(cmd);
+    return SDL_APP_CONTINUE;
+}
+
+void SDL_AppQuit(void *appstate, SDL_AppResult)
+{
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+    if (!st) return;
+    if (st-&gt;device) {
+        SDL_ReleaseGPUGraphicsPipeline(st-&gt;device, st-&gt;pipeline);
+        if (st-&gt;window) SDL_ReleaseWindowFromGPUDevice(st-&gt;device, st-&gt;window);
+        SDL_DestroyGPUDevice(st-&gt;device);
+    }
+    SDL_DestroyWindow(st-&gt;window);
+    delete st;
+}
+</code></pre>
+</section>
+
+<section>
+    <h2>Try it yourself</h2>
+    <ol>
+        <li>Change the three positions in the vertex shader to make a much smaller triangle. Recompile, observe — the shader source is rebuilt at runtime each launch.</li>
+        <li>Change the three colours to all red. The triangle now goes flat-red because every interpolated value is red.</li>
+        <li>Replace the fragment shader body with <code>return float4(in.position.xy / 800.0, 0.0, 1.0);</code> — the triangle becomes a screen-space gradient.</li>
+        <li>Add a fourth corner to the position/color arrays and ask the draw call for 4 vertices. The fourth corner is ignored because <code>PRIMITIVETYPE_TRIANGLELIST</code> consumes 3 at a time. Switch to <code>TRIANGLESTRIP</code> and the fourth vertex becomes a second triangle.</li>
+    </ol>
+</section>
+
+<nav class="footnav">
+    <a href="index.html">← Track index</a>
+    <a href="index.html">Index</a>
+    <a href="02-cross-platform-shaders.html">Next: Cross-Platform Shaders →</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+    <a href="../index.html">SDL3 Recipes</a> · <a href="index.html">3D Track</a> · Recipe 01
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-cpp.min.js"></script>
+</body>
+</html>

@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>03 · Handling Input — 2D Track — SDL3 Recipes</title>
+    <link rel="stylesheet" href="../style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+</head>
+<body>
+
+<nav class="topnav">
+    <a href="../index.html">SDL3 Recipes</a> ›
+    <a href="index.html">2D Track</a> ›
+    <span>03. Handling Input</span>
+</nav>
+
+<main>
+
+<header class="recipe-header">
+    <span class="badge badge-beginner">Beginner</span>
+    <h1>Recipe 03 — Handling Input</h1>
+    <p class="tagline">
+        React to keys, the mouse, and window resizes inside <code>SDL_AppEvent</code> —
+        and learn the right place to store "is the key held right now".
+    </p>
+</header>
+
+<section>
+    <h2>What you'll learn</h2>
+    <ul>
+        <li>How key / mouse / window events flow into <code>SDL_AppEvent</code>.</li>
+        <li>The difference between <em>edge-triggered</em> input (events) and <em>state-polled</em> input (per-frame).</li>
+        <li>How to use <code>SDL_SCANCODE_*</code> vs <code>SDL_KEYCODE_*</code> and when each is appropriate.</li>
+        <li>Why returning <code>SDL_APP_SUCCESS</code> from <code>SDL_AppEvent</code> is the right way to quit.</li>
+    </ul>
+</section>
+
+<section>
+    <h2>Prerequisites</h2>
+    <p>
+        <a href="02-drawing-primitives.html">Recipe 02 — Drawing Primitives</a>.
+    </p>
+</section>
+
+<section>
+    <h2>Walkthrough</h2>
+
+    <p>
+        SDL3 calls our <code>SDL_AppEvent</code> function once for every event
+        the windowing system hands it. Each event is a tagged union:
+        <code>e-&gt;type</code> tells you which kind, and one of the
+        union's sub-structs (<code>e-&gt;key</code>, <code>e-&gt;button</code>,
+        <code>e-&gt;motion</code>, <code>e-&gt;window</code> …) holds the data.
+    </p>
+
+    <h3>Two flavours of input</h3>
+    <p>
+        Most game input falls into two patterns, and the distinction matters:
+    </p>
+    <ul>
+        <li><strong>Edge events</strong> — "the user just pressed Space",
+        "they just clicked". Handle these in <code>SDL_AppEvent</code>; they
+        fire once per press. Good for jumps, shooting, menu selections.</li>
+        <li><strong>Held state</strong> — "is the right-arrow being held this
+        frame?". <em>Don't</em> reconstruct this from events. SDL maintains the
+        live keyboard state for you; read it in <code>SDL_AppIterate</code>.
+        Good for movement, charging, accelerating.</li>
+    </ul>
+
+    <h3>Edge events: key down, mouse click, quit</h3>
+<pre><code class="language-cpp">SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *e)
+{
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+
+    switch (e-&gt;type) {
+    case SDL_EVENT_QUIT:
+        return SDL_APP_SUCCESS;                   // window close button
+
+    case SDL_EVENT_KEY_DOWN:
+        // Scancode = physical key location (good for WASD movement);
+        // Key      = logical character under the current layout (good for shortcuts).
+        if (e-&gt;key.scancode == SDL_SCANCODE_ESCAPE) {
+            return SDL_APP_SUCCESS;
+        }
+        if (e-&gt;key.scancode == SDL_SCANCODE_SPACE) {
+            st-&gt;flashes++;                        // bump a counter for the demo
+        }
+        break;
+
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+        st-&gt;last_click_x = e-&gt;button.x;
+        st-&gt;last_click_y = e-&gt;button.y;
+        SDL_Log("click %d at (%.0f, %.0f)",
+                e-&gt;button.button, e-&gt;button.x, e-&gt;button.y);
+        break;
+
+    case SDL_EVENT_MOUSE_MOTION:
+        st-&gt;mouse_x = e-&gt;motion.x;
+        st-&gt;mouse_y = e-&gt;motion.y;
+        break;
+
+    case SDL_EVENT_WINDOW_RESIZED:
+        SDL_Log("resized to %dx%d", e-&gt;window.data1, e-&gt;window.data2);
+        break;
+
+    default: break;
+    }
+    return SDL_APP_CONTINUE;
+}
+</code></pre>
+
+    <h3>Held state: polling the keyboard each frame</h3>
+    <p>
+        For movement you want "while held". Don't track key-down/key-up
+        manually — SDL keeps a live array for you:
+    </p>
+<pre><code class="language-cpp">SDL_AppResult SDL_AppIterate(void *appstate)
+{
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+
+    // SDL hands back a pointer into its internal table; do not free it.
+    const bool *keys = SDL_GetKeyboardState(nullptr);
+
+    const float speed = 240.0f;          // pixels per second (we'll fix dt in recipe 04)
+    if (keys[SDL_SCANCODE_LEFT]  || keys[SDL_SCANCODE_A]) st-&gt;player_x -= speed / 60.0f;
+    if (keys[SDL_SCANCODE_RIGHT] || keys[SDL_SCANCODE_D]) st-&gt;player_x += speed / 60.0f;
+    if (keys[SDL_SCANCODE_UP]    || keys[SDL_SCANCODE_W]) st-&gt;player_y -= speed / 60.0f;
+    if (keys[SDL_SCANCODE_DOWN]  || keys[SDL_SCANCODE_S]) st-&gt;player_y += speed / 60.0f;
+
+    /* ... draw ... */
+}
+</code></pre>
+
+    <div class="warn">
+        <strong>Don't quit with <code>exit()</code>.</strong> Returning
+        <code>SDL_APP_SUCCESS</code> from <em>any</em> callback is the SDL3
+        way — it tells the callback runtime to wind down cleanly,
+        triggering <code>SDL_AppQuit</code> and freeing your state.
+    </div>
+</section>
+
+<section>
+    <h2>Complete listing</h2>
+<pre><code class="language-cpp">/*
+ * 03-handling-input.cpp — a draggable square that follows the mouse,
+ * WASD/arrow movement, Space to flash a counter, Esc to quit.
+ */
+#define SDL_MAIN_USE_CALLBACKS 1
+#include &lt;SDL3/SDL.h&gt;
+#include &lt;SDL3/SDL_main.h&gt;
+#include "gfx.hpp"
+
+struct AppState {
+    SDL_Window   *window   = nullptr;
+    SDL_Renderer *renderer = nullptr;
+    float player_x = 400.0f, player_y = 300.0f;
+    float mouse_x  = 0.0f,   mouse_y  = 0.0f;
+    float last_click_x = -1.0f, last_click_y = -1.0f;
+    int   flashes = 0;
+};
+
+SDL_AppResult SDL_AppInit(void **appstate, int, char *[])
+{
+    SDL_SetAppMetadata("Handling Input", "1.0", "com.example.sdl3.input");
+    if (!SDL_Init(SDL_INIT_VIDEO)) { SDL_Log("init: %s", SDL_GetError()); return SDL_APP_FAILURE; }
+
+    AppState *st = new AppState();
+    if (!SDL_CreateWindowAndRenderer("Handling Input", 800, 600,
+                                     SDL_WINDOW_RESIZABLE,
+                                     &amp;st-&gt;window, &amp;st-&gt;renderer)) {
+        SDL_Log("window: %s", SDL_GetError()); delete st; return SDL_APP_FAILURE;
+    }
+    SDL_SetRenderVSync(st-&gt;renderer, 1);
+    *appstate = st;
+    return SDL_APP_CONTINUE;
+}
+
+SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *e)
+{
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+
+    switch (e-&gt;type) {
+    case SDL_EVENT_QUIT:               return SDL_APP_SUCCESS;
+    case SDL_EVENT_KEY_DOWN:
+        if (e-&gt;key.scancode == SDL_SCANCODE_ESCAPE) return SDL_APP_SUCCESS;
+        if (e-&gt;key.scancode == SDL_SCANCODE_SPACE)  st-&gt;flashes++;
+        break;
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+        st-&gt;last_click_x = e-&gt;button.x;
+        st-&gt;last_click_y = e-&gt;button.y;
+        SDL_Log("click %d at (%.0f, %.0f)", e-&gt;button.button, e-&gt;button.x, e-&gt;button.y);
+        break;
+    case SDL_EVENT_MOUSE_MOTION:
+        st-&gt;mouse_x = e-&gt;motion.x;
+        st-&gt;mouse_y = e-&gt;motion.y;
+        break;
+    default: break;
+    }
+    return SDL_APP_CONTINUE;
+}
+
+SDL_AppResult SDL_AppIterate(void *appstate)
+{
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+
+    const bool *keys = SDL_GetKeyboardState(nullptr);
+    const float step = 4.0f;
+    if (keys[SDL_SCANCODE_LEFT]  || keys[SDL_SCANCODE_A]) st-&gt;player_x -= step;
+    if (keys[SDL_SCANCODE_RIGHT] || keys[SDL_SCANCODE_D]) st-&gt;player_x += step;
+    if (keys[SDL_SCANCODE_UP]    || keys[SDL_SCANCODE_W]) st-&gt;player_y -= step;
+    if (keys[SDL_SCANCODE_DOWN]  || keys[SDL_SCANCODE_S]) st-&gt;player_y += step;
+
+    gfx::clear(st-&gt;renderer, 18, 18, 28);
+
+    // The "player" — WASD / arrows move it.
+    gfx::set_color(st-&gt;renderer, 120, 200, 255, 255);
+    gfx::fill_rect(st-&gt;renderer, st-&gt;player_x - 20, st-&gt;player_y - 20, 40, 40);
+
+    // The mouse cursor, drawn as a crosshair.
+    gfx::set_color(st-&gt;renderer, 255, 240, 120, 255);
+    gfx::line(st-&gt;renderer, st-&gt;mouse_x - 8, st-&gt;mouse_y,     st-&gt;mouse_x + 8, st-&gt;mouse_y);
+    gfx::line(st-&gt;renderer, st-&gt;mouse_x,     st-&gt;mouse_y - 8, st-&gt;mouse_x,     st-&gt;mouse_y + 8);
+
+    // Last click marker (if any).
+    if (st-&gt;last_click_x &gt;= 0) {
+        gfx::set_color(st-&gt;renderer, 255, 110, 90, 255);
+        gfx::circle(st-&gt;renderer, st-&gt;last_click_x, st-&gt;last_click_y, 12);
+    }
+
+    // Space-pressed counter as a row of dots.
+    gfx::set_color(st-&gt;renderer, 60, 200, 120, 255);
+    for (int i = 0; i &lt; st-&gt;flashes &amp;&amp; i &lt; 40; ++i) {
+        gfx::fill_circle(st-&gt;renderer, 20.0f + i * 14.0f, 20.0f, 5.0f);
+    }
+
+    SDL_RenderPresent(st-&gt;renderer);
+    return SDL_APP_CONTINUE;
+}
+
+void SDL_AppQuit(void *appstate, SDL_AppResult)
+{
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+    if (st) {
+        SDL_DestroyRenderer(st-&gt;renderer);
+        SDL_DestroyWindow(st-&gt;window);
+        delete st;
+    }
+}
+</code></pre>
+</section>
+
+<section>
+    <h2>Try it yourself</h2>
+    <ol>
+        <li>Hold Space and notice the counter <em>doesn't</em> race — key-repeat fires events, but only on OS-level repeat intervals. For "fire while held," use <code>SDL_GetKeyboardState</code> instead.</li>
+        <li>Swap a <code>scancode</code> check for a <code>key.key == SDLK_W</code> check and try it with an AZERTY-layout simulator. Scancode = physical key, key = logical character.</li>
+        <li>Add a right-click case: <code>e-&gt;button.button == SDL_BUTTON_RIGHT</code> resets the player back to centre.</li>
+        <li>The movement uses a fixed step per frame. Run on a 144 Hz display and watch the player rocket. We'll fix that in recipe 04.</li>
+    </ol>
+</section>
+
+<nav class="footnav">
+    <a href="02-drawing-primitives.html">← 02. Drawing Primitives</a>
+    <a href="index.html">Index</a>
+    <a href="04-delta-time.html">Next: Delta Time →</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+    <a href="../index.html">SDL3 Recipes</a> · <a href="index.html">2D Track</a> · Recipe 03
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-cpp.min.js"></script>
+</body>
+</html>

@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>02 · Drawing Primitives — 2D Track — SDL3 Recipes</title>
+    <link rel="stylesheet" href="../style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+</head>
+<body>
+
+<nav class="topnav">
+    <a href="../index.html">SDL3 Recipes</a> ›
+    <a href="index.html">2D Track</a> ›
+    <span>02. Drawing Primitives</span>
+</nav>
+
+<main>
+
+<header class="recipe-header">
+    <span class="badge badge-beginner">Beginner</span>
+    <h1>Recipe 02 — Drawing Primitives</h1>
+    <p class="tagline">
+        Points, lines, rectangles, circles. The "set colour, then draw" pattern
+        every SDL3 primitive obeys.
+    </p>
+</header>
+
+<section>
+    <h2>What you'll learn</h2>
+    <ul>
+        <li>The set-then-draw model used by every <code>SDL_Render*</code> call.</li>
+        <li>How to draw points, lines, outlined and filled rectangles in plain SDL3.</li>
+        <li>How the repo's <code>gfx::</code> namespace ships outlined / filled circle and triangle helpers on top.</li>
+        <li>Why everything in SDL3's 2D API takes <code>float</code> coordinates.</li>
+    </ul>
+</section>
+
+<section>
+    <h2>Prerequisites</h2>
+    <p>
+        <a href="01-hello-window.html">Recipe 01 — Hello Window</a>. You have a
+        window opening and clearing every frame.
+    </p>
+</section>
+
+<section>
+    <h2>Walkthrough</h2>
+
+    <p>
+        Every drawing call in SDL3's 2D API reads the renderer's <em>current</em>
+        draw colour. So the universal pattern is:
+    </p>
+<pre><code class="language-cpp">SDL_SetRenderDrawColor(renderer, r, g, b, a);   // pick a colour (0..255)
+SDL_RenderRect(renderer, &amp;some_rect);          // draw with it
+</code></pre>
+    <p>
+        That's two SDL calls per shape. You can change the colour between every
+        draw — the renderer doesn't care.
+    </p>
+
+    <h3>Primitives shipped with SDL3</h3>
+    <p>
+        Out of the box, <code>SDL_Renderer</code> can draw: points
+        (<code>SDL_RenderPoint</code>, single pixel), lines
+        (<code>SDL_RenderLine</code>), rectangle outlines
+        (<code>SDL_RenderRect</code>), and filled rectangles
+        (<code>SDL_RenderFillRect</code>). All take <code>float</code>
+        coordinates (SDL3 dropped the integer-only SDL2 API).
+    </p>
+
+    <h3>What this repo adds: <code>gfx::</code></h3>
+    <p>
+        Circles and triangles aren't shipped as built-ins, so this repo's
+        <a href="../../examples/cpp/gfx.hpp">examples/cpp/gfx.hpp</a> adds them.
+        It also wraps the built-ins so every shape lives behind the same call
+        style:
+    </p>
+<pre><code class="language-cpp">gfx::set_color (ren, r, g, b, a);              // pick (alpha included)
+gfx::point     (ren, x, y);
+gfx::line      (ren, x1, y1, x2, y2);
+gfx::rect      (ren, x, y, w, h);              // outline
+gfx::fill_rect (ren, x, y, w, h);              // filled
+gfx::circle    (ren, cx, cy, radius);          // outline
+gfx::fill_circle(ren, cx, cy, radius);         // filled
+gfx::triangle     (ren, x1,y1, x2,y2, x3,y3);  // outline
+gfx::fill_triangle(ren, x1,y1, x2,y2, x3,y3);  // filled
+</code></pre>
+    <p>
+        Use whichever you like in the recipes. We'll use <code>gfx::</code> for
+        compactness; if you want to see what it expands to, read its <code>.cpp</code>.
+    </p>
+
+    <h3>Putting it together</h3>
+    <p>
+        Replace the body of <code>SDL_AppIterate</code> from recipe 01 with a
+        sequence of <em>pick a colour, draw something</em> pairs:
+    </p>
+<pre><code class="language-cpp">SDL_AppResult SDL_AppIterate(void *appstate)
+{
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+
+    gfx::clear(st-&gt;renderer, 18, 18, 28);            // dark slate background
+
+    // Outlined rectangle, top-left.
+    gfx::set_color(st-&gt;renderer, 255, 200, 60, 255);
+    gfx::rect(st-&gt;renderer, 40, 40, 160, 100);
+
+    // Filled rectangle, beside it.
+    gfx::set_color(st-&gt;renderer, 60, 200, 120, 255);
+    gfx::fill_rect(st-&gt;renderer, 220, 40, 160, 100);
+
+    // A diagonal line.
+    gfx::set_color(st-&gt;renderer, 80, 200, 255, 255);
+    gfx::line(st-&gt;renderer, 40, 180, 380, 260);
+
+    // Outlined and filled circles.
+    gfx::set_color(st-&gt;renderer, 255, 120, 200, 255);
+    gfx::circle(st-&gt;renderer, 130, 380, 55);
+    gfx::set_color(st-&gt;renderer, 120, 160, 255, 255);
+    gfx::fill_circle(st-&gt;renderer, 320, 380, 55);
+
+    // A pair of triangles.
+    gfx::set_color(st-&gt;renderer, 255, 240, 120, 255);
+    gfx::triangle(st-&gt;renderer, 470, 440, 550, 300, 630, 440);
+    gfx::set_color(st-&gt;renderer, 255, 110, 90, 255);
+    gfx::fill_triangle(st-&gt;renderer, 660, 440, 720, 300, 780, 440);
+
+    SDL_RenderPresent(st-&gt;renderer);
+    return SDL_APP_CONTINUE;
+}
+</code></pre>
+
+    <div class="note">
+        <strong>Why <code>float</code>?</strong> SDL3 chose float coordinates so
+        the rasterizer can place geometry sub-pixel-accurately. If you pass
+        whole-number floats you get the same look as integer SDL2; if you pass
+        <code>0.5</code> offsets you can avoid the "off by one row" alignment
+        bugs that plagued SDL2 line drawing.
+    </div>
+</section>
+
+<section>
+    <h2>Complete listing</h2>
+    <p>Drop into <a href="../../examples/cpp/callbacks.cpp">examples/cpp/callbacks.cpp</a> and <code>make run-cpp</code>.</p>
+<pre><code class="language-cpp">/*
+ * 02-drawing-primitives.cpp — every gfx:: primitive in one window.
+ */
+#define SDL_MAIN_USE_CALLBACKS 1
+#include &lt;SDL3/SDL.h&gt;
+#include &lt;SDL3/SDL_main.h&gt;
+#include "gfx.hpp"
+
+struct AppState {
+    SDL_Window   *window   = nullptr;
+    SDL_Renderer *renderer = nullptr;
+};
+
+SDL_AppResult SDL_AppInit(void **appstate, int, char *[])
+{
+    SDL_SetAppMetadata("Drawing Primitives", "1.0", "com.example.sdl3.primitives");
+
+    if (!SDL_Init(SDL_INIT_VIDEO)) {
+        SDL_Log("SDL_Init failed: %s", SDL_GetError());
+        return SDL_APP_FAILURE;
+    }
+
+    AppState *st = new AppState();
+
+    if (!SDL_CreateWindowAndRenderer("Drawing Primitives", 800, 600,
+                                     SDL_WINDOW_RESIZABLE,
+                                     &amp;st-&gt;window, &amp;st-&gt;renderer)) {
+        SDL_Log("CreateWindowAndRenderer failed: %s", SDL_GetError());
+        delete st;
+        return SDL_APP_FAILURE;
+    }
+    SDL_SetRenderVSync(st-&gt;renderer, 1);
+
+    *appstate = st;
+    return SDL_APP_CONTINUE;
+}
+
+SDL_AppResult SDL_AppEvent(void *, SDL_Event *e)
+{
+    if (e-&gt;type == SDL_EVENT_QUIT) return SDL_APP_SUCCESS;
+    return SDL_APP_CONTINUE;
+}
+
+SDL_AppResult SDL_AppIterate(void *appstate)
+{
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+
+    gfx::clear(st-&gt;renderer, 18, 18, 28);
+
+    gfx::set_color(st-&gt;renderer, 255, 200, 60, 255);
+    gfx::rect(st-&gt;renderer, 40, 40, 160, 100);
+
+    gfx::set_color(st-&gt;renderer, 60, 200, 120, 255);
+    gfx::fill_rect(st-&gt;renderer, 220, 40, 160, 100);
+
+    gfx::set_color(st-&gt;renderer, 80, 200, 255, 255);
+    gfx::line(st-&gt;renderer, 40, 180, 380, 260);
+
+    gfx::set_color(st-&gt;renderer, 255, 120, 200, 255);
+    gfx::circle(st-&gt;renderer, 130, 380, 55);
+
+    gfx::set_color(st-&gt;renderer, 120, 160, 255, 255);
+    gfx::fill_circle(st-&gt;renderer, 320, 380, 55);
+
+    gfx::set_color(st-&gt;renderer, 255, 240, 120, 255);
+    gfx::triangle(st-&gt;renderer, 470, 440, 550, 300, 630, 440);
+
+    gfx::set_color(st-&gt;renderer, 255, 110, 90, 255);
+    gfx::fill_triangle(st-&gt;renderer, 660, 440, 720, 300, 780, 440);
+
+    SDL_RenderPresent(st-&gt;renderer);
+    return SDL_APP_CONTINUE;
+}
+
+void SDL_AppQuit(void *appstate, SDL_AppResult)
+{
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+    if (st) {
+        SDL_DestroyRenderer(st-&gt;renderer);
+        SDL_DestroyWindow(st-&gt;window);
+        delete st;
+    }
+}
+</code></pre>
+</section>
+
+<section>
+    <h2>Try it yourself</h2>
+    <ol>
+        <li>Replace every <code>gfx::</code> call with the raw <code>SDL_Render*</code> equivalent for one shape, to convince yourself <code>gfx::</code> is paper-thin.</li>
+        <li>Pass <code>128</code> as the alpha to <code>gfx::set_color</code> for the filled rectangle and watch it blend over the line below. (SDL3 renderers default to <code>SDL_BLENDMODE_BLEND</code>, so alpha "just works.")</li>
+        <li>Draw a grid: nested <code>for</code> loops drawing <code>gfx::point</code> at every (10*i, 10*j) — a quick way to feel how <code>SDL_AppIterate</code> runs once per frame regardless of how much work it does.</li>
+    </ol>
+</section>
+
+<nav class="footnav">
+    <a href="01-hello-window.html">← 01. Hello Window</a>
+    <a href="index.html">Index</a>
+    <a href="03-handling-input.html">Next: Handling Input →</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+    <a href="../index.html">SDL3 Recipes</a> · <a href="index.html">2D Track</a> · Recipe 02
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-cpp.min.js"></script>
+</body>
+</html>

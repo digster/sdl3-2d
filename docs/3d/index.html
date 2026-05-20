@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>3D Track — SDL3 Recipes</title>
+    <meta name="description" content="Twelve C++ callback-style SDL3 recipes for 3D graphics, using SDL_GPU. From the hello triangle to a textured, lit, camera-controlled scene.">
+    <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<nav class="topnav">
+    <a href="../index.html">SDL3 Recipes</a> ›
+    <span>3D Track</span>
+</nav>
+
+<main>
+
+<header class="hero">
+    <h1>3D Track</h1>
+    <p class="lede">
+        Twelve recipes that take you from the "hello triangle" to a textured,
+        lit cube you can fly around with an FPS camera — all in C++ using SDL3's
+        <code>SDL_GPU</code> API (Metal / Vulkan / D3D12 under one abstraction).
+    </p>
+</header>
+
+<section>
+    <h2>Curriculum</h2>
+    <ul class="recipe-list">
+
+        <li><span class="num">01</span>
+            <span class="title"><a href="01-hello-triangle.html">Hello Triangle</a>
+            <div class="blurb">GPU device, swapchain, shaders, pipeline, render pass — the smallest legal SDL_GPU program.</div></span>
+            <span class="badge badge-beginner">Beginner</span></li>
+
+        <li><span class="num">02</span>
+            <span class="title"><a href="02-cross-platform-shaders.html">Cross-Platform Shaders</a>
+            <div class="blurb">Why MSL is fine on macOS, why SPIR-V matters elsewhere, and how to ship both.</div></span>
+            <span class="badge badge-beginner">Beginner</span></li>
+
+        <li><span class="num">03</span>
+            <span class="title"><a href="03-vertex-buffers.html">Vertex Buffers</a>
+            <div class="blurb">Real geometry instead of <code>[[vertex_id]]</code> tricks — GPU buffers, transfer buffers, input state.</div></span>
+            <span class="badge badge-intermediate">Intermediate</span></li>
+
+        <li><span class="num">04</span>
+            <span class="title"><a href="04-index-buffers-and-quads.html">Index Buffers &amp; Quads</a>
+            <div class="blurb">Drawing a quad with two triangles using 6 indices into 4 vertices.</div></span>
+            <span class="badge badge-intermediate">Intermediate</span></li>
+
+        <li><span class="num">05</span>
+            <span class="title"><a href="05-uniforms-and-mvp.html">Uniforms &amp; the MVP Matrix</a>
+            <div class="blurb">Push constants, a hand-written 4×4 matrix, the model-view-projection pipeline.</div></span>
+            <span class="badge badge-intermediate">Intermediate</span></li>
+
+        <li><span class="num">06</span>
+            <span class="title"><a href="06-the-3d-cube.html">The 3D Cube</a>
+            <div class="blurb">24 vertices, 36 indices, a rotating MVP. Your first real 3D object.</div></span>
+            <span class="badge badge-intermediate">Intermediate</span></li>
+
+        <li><span class="num">07</span>
+            <span class="title"><a href="07-depth-testing.html">Depth Testing</a>
+            <div class="blurb">Why the cube looks wrong without it. Depth attachments and depth-stencil state.</div></span>
+            <span class="badge badge-intermediate">Intermediate</span></li>
+
+        <li><span class="num">08</span>
+            <span class="title"><a href="08-textures-and-samplers.html">Textures &amp; Samplers</a>
+            <div class="blurb">Uploading a 2D image to the GPU, binding it to a fragment-shader sampler, UV coordinates.</div></span>
+            <span class="badge badge-advanced">Advanced</span></li>
+
+        <li><span class="num">09</span>
+            <span class="title"><a href="09-phong-lighting.html">Phong Lighting</a>
+            <div class="blurb">Per-fragment lighting with a normal vertex attribute and a light-position uniform.</div></span>
+            <span class="badge badge-advanced">Advanced</span></li>
+
+        <li><span class="num">10</span>
+            <span class="title"><a href="10-multiple-objects.html">Multiple Objects</a>
+            <div class="blurb">A small grid of cubes — one pipeline, one mesh, many <code>SDL_DrawGPUIndexedPrimitives</code> calls with different model matrices.</div></span>
+            <span class="badge badge-advanced">Advanced</span></li>
+
+        <li><span class="num">11</span>
+            <span class="title"><a href="11-fps-camera.html">FPS Camera</a>
+            <div class="blurb">Yaw/pitch from mouse motion, WASD relative to view, relative-mouse mode.</div></span>
+            <span class="badge badge-advanced">Advanced</span></li>
+
+        <li><span class="num">12</span>
+            <span class="title"><a href="12-render-to-texture.html">Render-to-Texture</a>
+            <div class="blurb">Capstone — render the scene to an offscreen texture, then a fullscreen post-process pass.</div></span>
+            <span class="badge badge-advanced">Advanced</span></li>
+
+    </ul>
+</section>
+
+<section>
+    <h2>How to run the code</h2>
+    <p>
+        Every recipe's <em>Complete listing</em> is a drop-in replacement for
+        <a href="../../examples/cpp-gpu/triangle.cpp">examples/cpp-gpu/triangle.cpp</a>.
+        Replace that file's contents, then build with <code>make run-gpu</code>
+        from the repo root.
+    </p>
+    <p>
+        Shaders are written in <strong>Metal Shading Language (MSL)</strong>
+        and embedded as raw string literals. On macOS that compiles at runtime
+        and needs no extra tooling. On other platforms see
+        <a href="02-cross-platform-shaders.html">recipe 02</a> for the
+        SPIR-V / DXIL story.
+    </p>
+</section>
+
+<nav class="footnav">
+    <a href="../index.html">← All tracks</a>
+    <span></span>
+    <a href="01-hello-triangle.html">Start with Recipe 01 →</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+    <a href="../index.html">SDL3 Recipes</a> · 3D Track ·
+    <a href="../2d/index.html">← Back to 2D Track</a>
+</footer>
+
+</body>
+</html>

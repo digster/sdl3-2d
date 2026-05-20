@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>06 · Sprite Animation — 2D Track — SDL3 Recipes</title>
+    <link rel="stylesheet" href="../style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+</head>
+<body>
+
+<nav class="topnav">
+    <a href="../index.html">SDL3 Recipes</a> ›
+    <a href="index.html">2D Track</a> ›
+    <span>06. Sprite Animation</span>
+</nav>
+
+<main>
+
+<header class="recipe-header">
+    <span class="badge badge-intermediate">Intermediate</span>
+    <h1>Recipe 06 — Sprite Animation</h1>
+    <p class="tagline">
+        One texture, many frames. Build a sprite sheet in code, then march
+        through it on a timer to animate.
+    </p>
+</header>
+
+<section>
+    <h2>What you'll learn</h2>
+    <ul>
+        <li>The "sprite sheet" idea — one texture holding a grid of frames.</li>
+        <li>Picking a frame with a moving <code>src</code> rect.</li>
+        <li>Driving the animation by an accumulator (frame-rate independent, like the ball in recipe 04).</li>
+        <li>The difference between looping and ping-pong animation.</li>
+    </ul>
+</section>
+
+<section>
+    <h2>Prerequisites</h2>
+    <p><a href="05-loading-textures.html">Recipe 05 — Loading Textures</a> and the delta-time pattern from recipe 04.</p>
+</section>
+
+<section>
+    <h2>Walkthrough</h2>
+
+    <h3>What a sprite sheet looks like</h3>
+    <p>
+        A sprite sheet is a grid: N frames laid out side by side in one image.
+        If each frame is 32×32 and there are 8 frames in a row, the sheet is
+        256×32. Frame <code>i</code> lives at <code>(i * 32, 0)</code> with
+        size <code>32×32</code>. Animating means drawing only that frame's
+        region of the texture, then advancing <code>i</code> on a timer.
+    </p>
+
+    <h3>State</h3>
+<pre><code class="language-cpp">struct AppState {
+    SDL_Window   *window   = nullptr;
+    SDL_Renderer *renderer = nullptr;
+    SDL_Texture  *sheet    = nullptr;
+
+    int frame_w = 32, frame_h = 32;
+    int num_frames = 8;
+
+    float frame_dur = 0.10f;     // seconds per frame -&gt; 10 fps animation
+    float frame_t   = 0.0f;      // accumulator
+    int   frame_i   = 0;
+
+    Uint64 prev_ns = 0;
+};
+</code></pre>
+
+    <h3>Advancing the frame</h3>
+<pre><code class="language-cpp">// Each call to SDL_AppIterate:
+Uint64 now_ns = SDL_GetTicksNS();
+float dt = (now_ns - st-&gt;prev_ns) / 1.0e9f;
+st-&gt;prev_ns = now_ns;
+
+st-&gt;frame_t += dt;
+while (st-&gt;frame_t &gt;= st-&gt;frame_dur) {
+    st-&gt;frame_t  -= st-&gt;frame_dur;
+    st-&gt;frame_i   = (st-&gt;frame_i + 1) % st-&gt;num_frames;   // loop
+}
+</code></pre>
+    <p>
+        Using a <code>while</code> (not <code>if</code>) means if the previous
+        frame took longer than one animation step (e.g. a hitch), we catch up
+        rather than slowing the animation down. Frame-rate independent.
+    </p>
+
+    <h3>Drawing the current frame</h3>
+<pre><code class="language-cpp">SDL_FRect src = {
+    static_cast&lt;float&gt;(st-&gt;frame_i * st-&gt;frame_w),
+    0.0f,
+    static_cast&lt;float&gt;(st-&gt;frame_w),
+    static_cast&lt;float&gt;(st-&gt;frame_h)
+};
+SDL_FRect dst = { 380.0f, 280.0f, st-&gt;frame_w * 4.0f, st-&gt;frame_h * 4.0f };  // 4x zoom
+SDL_RenderTexture(st-&gt;renderer, st-&gt;sheet, &amp;src, &amp;dst);
+</code></pre>
+
+    <div class="note">
+        <strong>Ping-pong (0→7→0)</strong> is one tweak away: track a direction
+        (<code>+1</code> / <code>-1</code>) and flip it when you hit either
+        end. Useful for breathing, idling, or pendulum animations.
+    </div>
+</section>
+
+<section>
+    <h2>Complete listing</h2>
+    <p>Builds an 8-frame "pulsing dot" sheet in code so the recipe runs with no asset files.</p>
+<pre><code class="language-cpp">/*
+ * 06-sprite-animation.cpp — a procedurally-built 8-frame "pulsing dot"
+ * sheet driven by a delta-time accumulator.
+ */
+#define SDL_MAIN_USE_CALLBACKS 1
+#include &lt;SDL3/SDL.h&gt;
+#include &lt;SDL3/SDL_main.h&gt;
+#include "gfx.hpp"
+
+struct AppState {
+    SDL_Window   *window   = nullptr;
+    SDL_Renderer *renderer = nullptr;
+    SDL_Texture  *sheet    = nullptr;
+    int   frame_w = 32, frame_h = 32, num_frames = 8;
+    float frame_dur = 0.10f, frame_t = 0.0f;
+    int   frame_i = 0;
+    Uint64 prev_ns = 0;
+};
+
+/* Paint an 8-frame sheet: each frame is a filled disc whose radius grows from
+ * 4 to 14 then shrinks back. Demonstrates frame_i indexing into a horizontal strip. */
+static SDL_Texture *make_sheet(SDL_Renderer *r, int fw, int fh, int n)
+{
+    SDL_Surface *s = SDL_CreateSurface(fw * n, fh, SDL_PIXELFORMAT_RGBA32);
+    if (!s) return nullptr;
+    Uint32 *px = static_cast&lt;Uint32 *&gt;(s-&gt;pixels);
+    const SDL_PixelFormatDetails *pfd = SDL_GetPixelFormatDetails(s-&gt;format);
+
+    for (int i = 0; i &lt; n; ++i) {
+        float t = (float)i / (n - 1);                   // 0..1
+        float radius = 4.0f + 10.0f * (1.0f - std::abs(0.5f - t) * 2.0f); // peaks at i=4
+        int cx = i * fw + fw / 2, cy = fh / 2;
+        for (int y = 0; y &lt; fh; ++y) {
+            for (int x = 0; x &lt; fw; ++x) {
+                int dx = (i * fw + x) - cx, dy = y - cy;
+                bool inside = dx*dx + dy*dy &lt;= (int)(radius * radius);
+                Uint32 c = inside
+                    ? SDL_MapRGBA(pfd, nullptr, 255, 200, 80, 255)
+                    : SDL_MapRGBA(pfd, nullptr, 0, 0, 0, 0);
+                px[y * (s-&gt;pitch / 4) + (i * fw + x)] = c;
+            }
+        }
+    }
+    SDL_Texture *t = SDL_CreateTextureFromSurface(r, s);
+    SDL_DestroySurface(s);
+    SDL_SetTextureScaleMode(t, SDL_SCALEMODE_NEAREST);  // keep pixels crisp at 4x zoom
+    return t;
+}
+
+SDL_AppResult SDL_AppInit(void **appstate, int, char *[])
+{
+    SDL_SetAppMetadata("Sprite Animation", "1.0", "com.example.sdl3.anim");
+    if (!SDL_Init(SDL_INIT_VIDEO)) { SDL_Log("%s", SDL_GetError()); return SDL_APP_FAILURE; }
+    AppState *st = new AppState();
+    if (!SDL_CreateWindowAndRenderer("Sprite Animation", 800, 600,
+                                     SDL_WINDOW_RESIZABLE,
+                                     &amp;st-&gt;window, &amp;st-&gt;renderer)) {
+        SDL_Log("%s", SDL_GetError()); delete st; return SDL_APP_FAILURE;
+    }
+    SDL_SetRenderVSync(st-&gt;renderer, 1);
+    st-&gt;sheet = make_sheet(st-&gt;renderer, st-&gt;frame_w, st-&gt;frame_h, st-&gt;num_frames);
+    if (!st-&gt;sheet) { delete st; return SDL_APP_FAILURE; }
+    st-&gt;prev_ns = SDL_GetTicksNS();
+    *appstate = st;
+    return SDL_APP_CONTINUE;
+}
+
+SDL_AppResult SDL_AppEvent(void *, SDL_Event *e)
+{
+    if (e-&gt;type == SDL_EVENT_QUIT) return SDL_APP_SUCCESS;
+    if (e-&gt;type == SDL_EVENT_KEY_DOWN &amp;&amp; e-&gt;key.scancode == SDL_SCANCODE_ESCAPE) return SDL_APP_SUCCESS;
+    return SDL_APP_CONTINUE;
+}
+
+SDL_AppResult SDL_AppIterate(void *appstate)
+{
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+
+    Uint64 now_ns = SDL_GetTicksNS();
+    float dt = (now_ns - st-&gt;prev_ns) / 1.0e9f;
+    st-&gt;prev_ns = now_ns;
+
+    st-&gt;frame_t += dt;
+    while (st-&gt;frame_t &gt;= st-&gt;frame_dur) {
+        st-&gt;frame_t -= st-&gt;frame_dur;
+        st-&gt;frame_i  = (st-&gt;frame_i + 1) % st-&gt;num_frames;
+    }
+
+    gfx::clear(st-&gt;renderer, 18, 18, 28);
+
+    SDL_FRect src = {
+        (float)(st-&gt;frame_i * st-&gt;frame_w), 0.0f,
+        (float)st-&gt;frame_w, (float)st-&gt;frame_h
+    };
+    SDL_FRect dst = { 380, 280, st-&gt;frame_w * 4.0f, st-&gt;frame_h * 4.0f };
+    SDL_RenderTexture(st-&gt;renderer, st-&gt;sheet, &amp;src, &amp;dst);
+
+    // For comparison, also draw the whole sheet at the top so you can SEE the strip.
+    SDL_FRect strip = { 20, 20, (float)(st-&gt;frame_w * st-&gt;num_frames * 2),
+                                (float)(st-&gt;frame_h * 2) };
+    SDL_RenderTexture(st-&gt;renderer, st-&gt;sheet, nullptr, &amp;strip);
+
+    SDL_RenderPresent(st-&gt;renderer);
+    return SDL_APP_CONTINUE;
+}
+
+void SDL_AppQuit(void *appstate, SDL_AppResult)
+{
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+    if (st) {
+        SDL_DestroyTexture(st-&gt;sheet);
+        SDL_DestroyRenderer(st-&gt;renderer);
+        SDL_DestroyWindow(st-&gt;window);
+        delete st;
+    }
+}
+</code></pre>
+</section>
+
+<section>
+    <h2>Try it yourself</h2>
+    <ol>
+        <li>Halve <code>frame_dur</code> to <code>0.05f</code> — animation runs twice as fast without changing anything else.</li>
+        <li>Swap the loop logic for ping-pong: keep a <code>dir = +1</code>, flip it at the ends.</li>
+        <li>Drive <code>frame_i</code> from input instead of time: only advance when the user holds Space.</li>
+        <li>Use a 2D sheet (rows = direction, columns = frame). Compute <code>src.x = col * fw, src.y = row * fh</code>.</li>
+    </ol>
+</section>
+
+<nav class="footnav">
+    <a href="05-loading-textures.html">← 05. Loading Textures</a>
+    <a href="index.html">Index</a>
+    <a href="07-collision-detection.html">Next: Collision Detection →</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+    <a href="../index.html">SDL3 Recipes</a> · <a href="index.html">2D Track</a> · Recipe 06
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-cpp.min.js"></script>
+</body>
+</html>
