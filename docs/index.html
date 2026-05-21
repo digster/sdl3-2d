@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>SDL3 Recipes — 2D & 3D Game Tutorials in C++</title>
-    <meta name="description" content="A progressive, callback-style C++ curriculum for SDL3: 12 recipes for 2D games (SDL_Renderer) and 12 for 3D graphics (SDL_GPU). Beginner to advanced.">
+    <meta name="description" content="A progressive, callback-style C++ curriculum for SDL3: 12 recipes for 2D games (SDL_Renderer) and 13 for 3D graphics (SDL_GPU), including cross-platform shaders via SDL_shadercross. Beginner to advanced.">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -19,9 +19,10 @@
     <h1>SDL3 Recipes</h1>
     <p class="lede">
         A progressive, callback-style C++ curriculum for SDL3 — twelve recipes for
-        2D games and twelve for 3D graphics, ordered beginner to advanced. Every
-        snippet uses the same <code>SDL_AppInit</code> / <code>SDL_AppEvent</code>
-        / <code>SDL_AppIterate</code> / <code>SDL_AppQuit</code> skeleton, so you
+        2D games and thirteen for 3D graphics (capped with cross-platform shaders
+        via SDL_shadercross), ordered beginner to advanced. Every snippet uses
+        the same <code>SDL_AppInit</code> / <code>SDL_AppEvent</code> /
+        <code>SDL_AppIterate</code> / <code>SDL_AppQuit</code> skeleton, so you
         learn one loop model and reuse it everywhere.
     </p>
 </header>
@@ -42,12 +43,13 @@
         </a>
 
         <a class="card" href="3d/index.html">
-            <div class="meta">12 recipes · SDL_GPU</div>
+            <div class="meta">13 recipes · SDL_GPU + SDL_shadercross</div>
             <h2>3D Track</h2>
             <p>
                 Drop one tier below SDL_Renderer to SDL_GPU — Metal / Vulkan /
                 D3D12 under one API. From the "hello triangle" to a textured, lit
-                cube with an FPS camera and offscreen render targets.
+                cube with an FPS camera, offscreen render targets, and finally
+                cross-platform shaders authored once in HLSL.
             </p>
             <span class="cta">Start with Recipe 01 →</span>
         </a>
@@ -115,7 +117,7 @@
         Hello Triangle · Cross-Platform Shaders · Vertex Buffers · Index Buffers
         &amp; Quads · Uniforms &amp; the MVP Matrix · The 3D Cube · Depth
         Testing · Textures &amp; Samplers · Phong Lighting · Multiple Objects ·
-        FPS Camera · Render-to-Texture.
+        FPS Camera · Render-to-Texture · Shadercross in Practice.
     </p>
 </section>
 

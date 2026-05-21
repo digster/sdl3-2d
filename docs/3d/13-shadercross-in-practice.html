@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>13 · Shadercross in Practice — 3D Track — SDL3 Recipes</title>
+    <link rel="stylesheet" href="../style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+</head>
+<body>
+
+<nav class="topnav">
+    <a href="../index.html">SDL3 Recipes</a> ›
+    <a href="index.html">3D Track</a> ›
+    <span>13. Shadercross in Practice</span>
+</nav>
+
+<main>
+
+<header class="recipe-header">
+    <span class="badge badge-advanced">Advanced</span>
+    <h1>Recipe 13 — Shadercross in Practice</h1>
+    <p class="tagline">
+        Recipe 02 explained <em>why</em> cross-platform shaders are hard. This
+        one solves the problem the way real engines do: author once in HLSL,
+        cross-compile to whatever the device's backend natively wants, ship one
+        binary that runs on Metal, Vulkan and D3D12.
+    </p>
+</header>
+
+<section>
+    <h2>What you'll learn</h2>
+    <ul>
+        <li>The four-function <a href="https://github.com/libsdl-org/SDL_shadercross">SDL_shadercross</a> runtime API: <code>Init</code>, <code>Quit</code>, <code>CompileSPIRVFromHLSL</code>, <code>CompileGraphicsShaderFromSPIRV</code>.</li>
+        <li>Why <code>SDL_ShaderCross_CompileGraphicsShaderFromSPIRV</code> is the only call that <em>has</em> to know about the backend — it transparently transpiles SPIR-V to MSL/DXIL when the device asks for it.</li>
+        <li>The two delivery patterns: <strong>runtime</strong> (HLSL source compiled on launch) and <strong>offline</strong> (pre-compiled <code>.spv</code> loaded from disk via the <code>shadercross</code> CLI).</li>
+        <li>How HLSL semantics (<code>SV_VertexID</code>, <code>SV_Position</code>, <code>SV_Target</code>) are what makes one source portable.</li>
+        <li>When to pick which workflow, and why most shipped games do offline.</li>
+    </ul>
+</section>
+
+<section>
+    <h2>Prerequisites</h2>
+    <p>
+        <a href="01-hello-triangle.html">Recipe 01 — Hello Triangle</a> for the
+        pipeline mechanics, and <a href="02-cross-platform-shaders.html">Recipe
+        02 — Cross-Platform Shaders</a> for the conceptual map this recipe
+        builds on. You'll also need <strong>SDL_shadercross</strong> and
+        <strong>glslangValidator</strong> installed. shadercross isn't in
+        Homebrew yet; the full macOS build recipe lives in
+        <a href="../../examples/cpp-gpu-shadercross/README.md"><code>examples/cpp-gpu-shadercross/README.md</code></a>.
+        The short version:
+    </p>
+<pre><code class="language-bash">brew install spirv-cross glslang
+git clone --recursive https://github.com/libsdl-org/SDL_shadercross.git
+cd SDL_shadercross
+cmake -B build -DSDLSHADERCROSS_INSTALL=ON -DSDLSHADERCROSS_DXC=OFF
+cmake --build build
+sudo cmake --install build</code></pre>
+    <div class="note">
+        <strong>Why both?</strong> shadercross can take HLSL <em>or</em>
+        SPIR-V as input. HLSL → SPIR-V goes through DXC (not bundled on
+        macOS); SPIR-V → MSL/DXIL goes through SPIRV-Cross (always bundled).
+        So the cross-platform-dispatch part runs without DXC; the recipe just
+        uses <code>glslangValidator</code> to produce the SPIR-V from GLSL —
+        no DXC, no Microsoft compiler. The <em>Advanced</em> section of the
+        sibling README explains how to add DXC if you want to author in HLSL.
+    </div>
+</section>
+
+<section>
+    <h2>Walkthrough</h2>
+
+    <h3>The same triangle, a different shader path</h3>
+    <p>
+        Side by side with <a href="../../examples/cpp-gpu/triangle.cpp">examples/cpp-gpu/triangle.cpp</a>,
+        the only difference in this example is <strong>how the shaders enter the
+        pipeline</strong>. The window, command buffer, render pass, draw call,
+        and even the gradient triangle on screen are identical. Diff the two
+        files; the deltas are entirely in <code>SDL_AppInit</code> around shader
+        creation.
+    </p>
+
+    <h3>HLSL, with semantics</h3>
+    <p>
+        Author both stages in HLSL. The magic that makes the same source work
+        on every backend is HLSL's <em>semantics</em>: <code>SV_VertexID</code>
+        for the per-vertex index, <code>SV_Position</code> for the clip-space
+        position output, <code>SV_Target</code> for the colour render target.
+        DXC compiles these to SPIR-V with the right <code>BuiltIn</code>
+        decorations; SPIRV-Cross then translates them into Metal's
+        <code>[[position]]</code> / <code>[[vertex_id]]</code> /
+        <code>[[color(0)]]</code> on macOS, or leaves them as Vulkan SPIR-V on
+        Linux. Without semantics, cross-compilation would have to guess intent.
+    </p>
+<pre><code class="language-hlsl">// triangle.vert.hlsl  — three baked corners selected by SV_VertexID.
+struct VSOut {
+    float4 position : SV_Position;
+    float4 color    : COLOR0;
+};
+
+VSOut main(uint vid : SV_VertexID)
+{
+    float2 positions[3] = {
+        float2( 0.0f,  0.5f), float2(-0.5f, -0.5f), float2(0.5f, -0.5f)
+    };
+    float3 colors[3] = {
+        float3(1,0,0), float3(0,1,0), float3(0,0,1)
+    };
+    VSOut o;
+    o.position = float4(positions[vid], 0, 1);
+    o.color    = float4(colors[vid], 1);
+    return o;
+}</code></pre>
+<pre><code class="language-hlsl">// triangle.frag.hlsl — pass the interpolated colour through.
+struct VSOut {
+    float4 position : SV_Position;
+    float4 color    : COLOR0;
+};
+
+float4 main(VSOut input) : SV_Target { return input.color; }</code></pre>
+
+    <h3>The runtime path: ~10 lines per stage</h3>
+    <p>
+        Two shadercross calls per stage. First, HLSL → SPIR-V:
+    </p>
+<pre><code class="language-cpp">SDL_ShaderCross_HLSL_Info hi{};
+hi.source       = kVertexShaderHLSL;
+hi.entrypoint   = "main";
+hi.shader_stage = SDL_SHADERCROSS_SHADERSTAGE_VERTEX;
+size_t  spirv_size = 0;
+void   *spirv      = SDL_ShaderCross_CompileSPIRVFromHLSL(&amp;hi, &amp;spirv_size);
+if (!spirv) { /* SDL_GetError() */ }</code></pre>
+    <p>
+        Then SPIR-V → backend-native <code>SDL_GPUShader</code>. This second
+        call is the one that actually knows about the backend — it transpiles
+        to MSL on macOS, keeps SPIR-V on Vulkan, compiles to DXIL on D3D12, all
+        without your code branching:
+    </p>
+<pre><code class="language-cpp">SDL_ShaderCross_SPIRV_Info si{};
+si.bytecode      = (const Uint8 *)spirv;
+si.bytecode_size = spirv_size;
+si.entrypoint    = "main";
+si.shader_stage  = SDL_SHADERCROSS_SHADERSTAGE_VERTEX;
+
+SDL_ShaderCross_GraphicsShaderResourceInfo ri{};   // all zero — no bindings
+
+SDL_GPUShader *vs =
+    SDL_ShaderCross_CompileGraphicsShaderFromSPIRV(device, &amp;si, &amp;ri, /*props=*/0);
+SDL_free(spirv);   // shader has consumed the bytes now</code></pre>
+
+    <h3>The offline path: same second call, different source for the SPIR-V</h3>
+    <p>
+        Real games don't run a shader compiler on the player's machine.
+        Instead, they compile SPIR-V at build time, ship the bytecode, and
+        only call the <em>second</em> shadercross function (the one that
+        produces the SDL_GPUShader) at runtime. The <code>Makefile</code>'s
+        <code>shaders</code> target uses <code>glslangValidator</code> on
+        sibling GLSL sources because it's the no-DXC path:
+    </p>
+<pre><code class="language-bash">glslangValidator -V shaders/triangle.vert.glsl -o shaders/build/triangle.vert.spv
+glslangValidator -V shaders/triangle.frag.glsl -o shaders/build/triangle.frag.spv</code></pre>
+    <p>
+        Authoring in HLSL instead? <code>make shaders-hlsl</code> runs the
+        <code>shadercross</code> CLI itself, which can emit SPIR-V plus
+        readable MSL / DXIL side-outputs you can inspect:
+    </p>
+<pre><code class="language-bash">shadercross triangle.vert.hlsl -s HLSL -d SPIRV -t vertex   -o triangle.vert.spv
+shadercross triangle.vert.hlsl -s HLSL -d MSL   -t vertex   -o triangle.vert.msl
+shadercross triangle.vert.hlsl -s HLSL -d DXIL  -t vertex   -o triangle.vert.dxil</code></pre>
+    <p>
+        Either way, at runtime you load the <code>.spv</code> and hand it to
+        the same <code>CompileGraphicsShaderFromSPIRV</code>:
+    </p>
+<pre><code class="language-cpp">size_t  spirv_size = 0;
+void   *spirv = SDL_LoadFile("shaders/build/triangle.vert.spv", &amp;spirv_size);
+// ... same SDL_ShaderCross_SPIRV_Info as above, same call, same result.</code></pre>
+    <p>
+        That's the <em>entire</em> difference between the two modes — about ten
+        lines. The example binary takes a <code>--mode spirv|runtime</code>
+        flag (spirv is the default) so you can run both back-to-back from the
+        same build.
+    </p>
+
+    <h3>The diagnostic log: see what the device actually picked</h3>
+    <p>
+        On startup, ask the device which formats it accepted, and log them.
+        This is what tells you whether shadercross is going to do a transpile
+        on this run, or hand the SPIR-V straight through:
+    </p>
+<pre><code class="language-cpp">SDL_GPUShaderFormat f = SDL_GetGPUShaderFormats(device);
+if (f &amp; SDL_GPU_SHADERFORMAT_SPIRV)    SDL_Log("  - SPIRV    (Vulkan)");
+if (f &amp; SDL_GPU_SHADERFORMAT_MSL)      SDL_Log("  - MSL      (Metal source)");
+if (f &amp; SDL_GPU_SHADERFORMAT_METALLIB) SDL_Log("  - METALLIB (compiled Metal)");
+if (f &amp; SDL_GPU_SHADERFORMAT_DXIL)     SDL_Log("  - DXIL     (D3D12)");
+if (f &amp; SDL_GPU_SHADERFORMAT_DXBC)     SDL_Log("  - DXBC     (D3D11)");</code></pre>
+    <p>
+        On macOS expect <code>MSL</code> (and optionally <code>METALLIB</code>);
+        on Linux expect <code>SPIRV</code>; on Windows expect <code>DXIL</code>.
+        Crucially the <em>rest of the code does not branch on this</em> — it's
+        purely informational.
+    </p>
+
+    <div class="note">
+        <strong>Runtime vs offline — which to pick?</strong> Offline is what
+        ships in 95% of games: faster cold-start (no DXC on the user's
+        machine), smaller binary (no DXC linked in), easier symbol-level
+        debugging of the SPIR-V. Runtime is the right call for editors,
+        shader hot-reload, procedurally generated shaders, or learning — when
+        the convenience of "edit a string, rerun" outweighs the cold-start
+        cost.
+    </div>
+</section>
+
+<section>
+    <h2>Complete listing</h2>
+    <p>
+        The full file from the repo, around 340 lines. Drop into
+        <a href="../../examples/cpp-gpu-shadercross/triangle_shadercross.cpp"><code>examples/cpp-gpu-shadercross/triangle_shadercross.cpp</code></a>
+        and build with <code>make run-shadercross</code> (after installing
+        shadercross per the prerequisites above).
+    </p>
+<pre><code class="language-cpp">/*
+ * triangle_shadercross.cpp — SDL3 GPU + SDL_shadercross cross-platform shaders.
+ * See the file's header comment for the full design notes. Abridged below to
+ * just the moving parts.
+ */
+#define SDL_MAIN_USE_CALLBACKS 1
+#include &lt;SDL3/SDL.h&gt;
+#include &lt;SDL3/SDL_main.h&gt;
+#include &lt;SDL3_shadercross/SDL_shadercross.h&gt;
+
+#include &lt;cstring&gt;
+#include &lt;cstdlib&gt;
+#include &lt;string&gt;
+
+static const char *kVertexShaderHLSL = R"hlsl(
+struct VSOut { float4 position : SV_Position; float4 color : COLOR0; };
+VSOut main(uint vid : SV_VertexID) {
+    float2 P[3] = { float2(0,0.5), float2(-0.5,-0.5), float2(0.5,-0.5) };
+    float3 C[3] = { float3(1,0,0), float3(0,1,0), float3(0,0,1) };
+    VSOut o; o.position = float4(P[vid],0,1); o.color = float4(C[vid],1); return o;
+}
+)hlsl";
+
+static const char *kFragmentShaderHLSL = R"hlsl(
+struct VSOut { float4 position : SV_Position; float4 color : COLOR0; };
+float4 main(VSOut input) : SV_Target { return input.color; }
+)hlsl";
+
+enum class ShaderMode { RUNTIME, SPIRV };
+
+struct AppState {
+    SDL_Window              *window   = nullptr;
+    SDL_GPUDevice           *device   = nullptr;
+    SDL_GPUGraphicsPipeline *pipeline = nullptr;
+    long       max_frames = -1;
+    long       frame      = 0;
+    ShaderMode mode       = ShaderMode::RUNTIME;
+};
+
+static SDL_AppResult fail(const char *what) {
+    SDL_Log("%s: %s", what, SDL_GetError());
+    return SDL_APP_FAILURE;
+}
+
+static void log_device_shader_formats(SDL_GPUShaderFormat f) {
+    SDL_Log("device-accepted shader formats:");
+    if (f &amp; SDL_GPU_SHADERFORMAT_SPIRV)    SDL_Log("  - SPIRV    (Vulkan)");
+    if (f &amp; SDL_GPU_SHADERFORMAT_MSL)      SDL_Log("  - MSL      (Metal source)");
+    if (f &amp; SDL_GPU_SHADERFORMAT_METALLIB) SDL_Log("  - METALLIB (compiled Metal)");
+    if (f &amp; SDL_GPU_SHADERFORMAT_DXIL)     SDL_Log("  - DXIL     (D3D12)");
+    if (f &amp; SDL_GPU_SHADERFORMAT_DXBC)     SDL_Log("  - DXBC     (D3D11)");
+}
+
+/* Mode-agnostic: compile an HLSL string or load a .spv, then produce a shader. */
+static SDL_GPUShader *load_stage(SDL_GPUDevice *device, ShaderMode mode,
+                                 const char *hlsl, const char *spv_basename,
+                                 SDL_ShaderCross_ShaderStage stage)
+{
+    size_t  size = 0;
+    void   *bytes = nullptr;
+
+    if (mode == ShaderMode::RUNTIME) {
+        SDL_ShaderCross_HLSL_Info hi{};
+        hi.source = hlsl; hi.entrypoint = "main"; hi.shader_stage = stage;
+        bytes = SDL_ShaderCross_CompileSPIRVFromHLSL(&amp;hi, &amp;size);
+    } else {
+        std::string path = std::string("examples/cpp-gpu-shadercross/shaders/build/") + spv_basename;
+        bytes = SDL_LoadFile(path.c_str(), &amp;size);
+        if (!bytes) SDL_Log("did you run `make shaders`? %s", SDL_GetError());
+    }
+    if (!bytes) return nullptr;
+
+    SDL_ShaderCross_SPIRV_Info si{};
+    si.bytecode = (const Uint8 *)bytes; si.bytecode_size = size;
+    si.entrypoint = "main"; si.shader_stage = stage;
+
+    SDL_ShaderCross_GraphicsShaderResourceInfo ri{};   // all zero — no bindings
+    SDL_GPUShader *sh =
+        SDL_ShaderCross_CompileGraphicsShaderFromSPIRV(device, &amp;si, &amp;ri, 0);
+    SDL_free(bytes);
+    return sh;
+}
+
+SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
+    if (!SDL_Init(SDL_INIT_VIDEO)) return fail("SDL_Init");
+    AppState *st = new AppState();
+    *appstate = st;
+
+    for (int i = 1; i &lt; argc; ++i) {
+        if (!std::strcmp(argv[i], "--frames") &amp;&amp; i + 1 &lt; argc)
+            st-&gt;max_frames = std::atol(argv[++i]);
+        else if (!std::strcmp(argv[i], "--mode") &amp;&amp; i + 1 &lt; argc) {
+            const char *m = argv[++i];
+            if      (!std::strcmp(m, "runtime")) st-&gt;mode = ShaderMode::RUNTIME;
+            else if (!std::strcmp(m, "spirv"))   st-&gt;mode = ShaderMode::SPIRV;
+        }
+    }
+
+    if (!SDL_ShaderCross_Init()) return fail("SDL_ShaderCross_Init");
+
+    // Advertise every format — SDL picks what the actual backend wants.
+    SDL_GPUShaderFormat fmts = SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_MSL |
+                               SDL_GPU_SHADERFORMAT_METALLIB | SDL_GPU_SHADERFORMAT_DXIL |
+                               SDL_GPU_SHADERFORMAT_DXBC;
+    st-&gt;device = SDL_CreateGPUDevice(fmts, /*debug=*/true, nullptr);
+    if (!st-&gt;device) return fail("SDL_CreateGPUDevice");
+    log_device_shader_formats(SDL_GetGPUShaderFormats(st-&gt;device));
+
+    st-&gt;window = SDL_CreateWindow("SDL3 GPU + shadercross", 800, 600, SDL_WINDOW_RESIZABLE);
+    SDL_ClaimWindowForGPUDevice(st-&gt;device, st-&gt;window);
+
+    SDL_GPUShader *vs = load_stage(st-&gt;device, st-&gt;mode, kVertexShaderHLSL,
+                                   "triangle.vert.spv",
+                                   SDL_SHADERCROSS_SHADERSTAGE_VERTEX);
+    SDL_GPUShader *fs = load_stage(st-&gt;device, st-&gt;mode, kFragmentShaderHLSL,
+                                   "triangle.frag.spv",
+                                   SDL_SHADERCROSS_SHADERSTAGE_FRAGMENT);
+    if (!vs || !fs) return SDL_APP_FAILURE;
+
+    SDL_GPUColorTargetDescription ct{};
+    ct.format = SDL_GetGPUSwapchainTextureFormat(st-&gt;device, st-&gt;window);
+    SDL_GPUGraphicsPipelineCreateInfo pci{};
+    pci.vertex_shader = vs; pci.fragment_shader = fs;
+    pci.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+    pci.target_info.color_target_descriptions = &amp;ct;
+    pci.target_info.num_color_targets = 1;
+    st-&gt;pipeline = SDL_CreateGPUGraphicsPipeline(st-&gt;device, &amp;pci);
+
+    SDL_ReleaseGPUShader(st-&gt;device, vs);
+    SDL_ReleaseGPUShader(st-&gt;device, fs);
+    if (!st-&gt;pipeline) return fail("SDL_CreateGPUGraphicsPipeline");
+    return SDL_APP_CONTINUE;
+}
+
+/* SDL_AppEvent / SDL_AppIterate are identical to recipe 01 — see that recipe
+ * for the per-frame loop with the NULL-swapchain handling. SDL_AppQuit adds
+ * one line: SDL_ShaderCross_Quit() to balance the Init above. */</code></pre>
+</section>
+
+<section>
+    <h2>Try it yourself</h2>
+    <ol>
+        <li>Run the example in the default (spirv) mode and read the startup log:
+            <pre><code class="language-bash">make shaders &amp;&amp; make run-shadercross</code></pre>
+            You should see "<code>shader mode: spirv (loaded from .spv on disk…)</code>"
+            then a list of the formats your device accepted — on macOS that's MSL
+            (and probably METALLIB). The triangle renders the same as the
+            embedded-MSL example in <code>examples/cpp-gpu/</code>.</li>
+        <li>Edit one of the corner colours in
+            <code>examples/cpp-gpu-shadercross/shaders/triangle.vert.glsl</code>,
+            re-run <code>make shaders &amp;&amp; make run-shadercross</code>, and
+            see the change. The SPIR-V is regenerated by
+            <code>glslangValidator</code>; the C++ doesn't need recompiling.</li>
+        <li>Built shadercross with DXC? Try <code>make shaders-hlsl</code> to
+            cross-compile the HLSL sources instead — alongside <code>.spv</code>
+            you'll see <code>.msl</code> and (if DXC is enabled) <code>.dxil</code>
+            files appear in <code>shaders/build/</code>. Open the <code>.msl</code>
+            files in an editor — that's the actual Metal shader your GPU will
+            run. Compare it line by line with the embedded MSL in
+            <a href="../../examples/cpp-gpu/triangle.cpp"><code>examples/cpp-gpu/triangle.cpp</code></a>.</li>
+        <li>Also with DXC, exercise the runtime path:
+            <code>./build/demo_gpu_shadercross --mode runtime</code>. The startup
+            log will read "<code>shader mode: runtime …</code>" and the embedded
+            HLSL string gets compiled in-process. Without DXC the example logs
+            a clear hint and points back to this page.</li>
+        <li>(Advanced) Add a uniform buffer — say, a single float for an
+            animated colour shift. Bump <code>num_uniform_buffers</code> in the
+            <code>SDL_ShaderCross_GraphicsShaderResourceInfo</code> you pass in,
+            or replace the hand-counted struct with a
+            <code>SDL_ShaderCross_ReflectGraphicsSPIRV</code> call that fills
+            it from the SPIR-V itself.</li>
+    </ol>
+</section>
+
+<nav class="footnav">
+    <a href="12-render-to-texture.html">← 12. Render-to-Texture</a>
+    <a href="index.html">Index</a>
+    <a href="../2d/index.html">← Back to 2D Track</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+    <a href="../index.html">SDL3 Recipes</a> · <a href="index.html">3D Track</a> · Recipe 13
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-cpp.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-hlsl.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+</body>
+</html>

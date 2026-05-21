@@ -6,11 +6,16 @@
 #
 #   cmake -B build
 #   cmake --build build
-#   ./build/demo_traditional      ./build/demo_callbacks
+#   ./build/demo_traditional   ./build/demo_callbacks
+#   ./build/demo_gpu           ./build/demo_gpu_shadercross    (the last only
+#                                                               if SDL_shadercross
+#                                                               is installed)
 #
-# The two demos are FULLY INDEPENDENT: each executable is built only from its
-# own folder (examples/c or examples/cpp), with that folder on its private
-# include path. There is no shared gfx library and no cross-linking.
+# The demos are FULLY INDEPENDENT: each executable is built only from its own
+# folder (examples/c, examples/cpp, examples/cpp-gpu, examples/cpp-gpu-shadercross),
+# with that folder on its private include path. There is no shared gfx library
+# and no cross-linking. The shadercross target is optional — see the find_package
+# block at the bottom.
 
 cmake_minimum_required(VERSION 3.16)
 
@@ -67,3 +72,37 @@ add_executable(demo_gpu
 target_include_directories(demo_gpu PRIVATE examples/cpp-gpu)
 target_link_libraries(demo_gpu PRIVATE SDL3::SDL3)
 target_compile_options(demo_gpu PRIVATE -Wall -Wextra)
+
+# --- C++ SDL_GPU + SDL_shadercross example — cross-platform shaders authored
+#     ONCE in HLSL and runtime-translated to whatever the GPU backend wants
+#     (SPIR-V on Vulkan, MSL on Metal, DXIL on D3D12). This target is the only
+#     one in the project with a dependency beyond SDL3 itself, so it is
+#     OPTIONAL: detected via find_package and silently skipped if missing,
+#     keeping the other three demos building cleanly on a vanilla
+#     `brew install sdl3` machine. See examples/cpp-gpu-shadercross/README.md
+#     for shadercross build instructions on macOS. ---
+find_package(SDL3_shadercross CONFIG QUIET)
+if(SDL3_shadercross_FOUND)
+    add_executable(demo_gpu_shadercross
+        examples/cpp-gpu-shadercross/triangle_shadercross.cpp)
+    target_include_directories(demo_gpu_shadercross
+        PRIVATE examples/cpp-gpu-shadercross)
+    # Upstream may export either the shared or the namespaced umbrella target
+    # depending on how shadercross was configured (-DSDLSHADERCROSS_SHARED /
+    # -DSDLSHADERCROSS_STATIC). Prefer the shared variant, fall back to either.
+    if(TARGET SDL3_shadercross::SDL3_shadercross-shared)
+        target_link_libraries(demo_gpu_shadercross
+            PRIVATE SDL3::SDL3 SDL3_shadercross::SDL3_shadercross-shared)
+    elseif(TARGET SDL3_shadercross::SDL3_shadercross-static)
+        target_link_libraries(demo_gpu_shadercross
+            PRIVATE SDL3::SDL3 SDL3_shadercross::SDL3_shadercross-static)
+    else()
+        target_link_libraries(demo_gpu_shadercross
+            PRIVATE SDL3::SDL3 SDL3_shadercross::SDL3_shadercross)
+    endif()
+    target_compile_options(demo_gpu_shadercross PRIVATE -Wall -Wextra)
+else()
+    message(STATUS
+        "SDL_shadercross not found — skipping demo_gpu_shadercross. "
+        "See examples/cpp-gpu-shadercross/README.md to build it from source.")
+endif()

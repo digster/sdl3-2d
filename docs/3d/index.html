@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>3D Track — SDL3 Recipes</title>
-    <meta name="description" content="Twelve C++ callback-style SDL3 recipes for 3D graphics, using SDL_GPU. From the hello triangle to a textured, lit, camera-controlled scene.">
+    <meta name="description" content="Thirteen C++ callback-style SDL3 recipes for 3D graphics, using SDL_GPU. From the hello triangle to a textured, lit, camera-controlled scene and cross-platform shaders via SDL_shadercross.">
     <link rel="stylesheet" href="../style.css">
 </head>
 <body>
@@ -19,9 +19,11 @@
 <header class="hero">
     <h1>3D Track</h1>
     <p class="lede">
-        Twelve recipes that take you from the "hello triangle" to a textured,
-        lit cube you can fly around with an FPS camera — all in C++ using SDL3's
-        <code>SDL_GPU</code> API (Metal / Vulkan / D3D12 under one abstraction).
+        Thirteen recipes that take you from the "hello triangle" to a textured,
+        lit cube you can fly around with an FPS camera — and finally to
+        cross-platform shaders authored once in HLSL and shipped to every
+        backend. All in C++ using SDL3's <code>SDL_GPU</code> API (Metal /
+        Vulkan / D3D12 under one abstraction).
     </p>
 </header>
 
@@ -89,23 +91,37 @@
             <div class="blurb">Capstone — render the scene to an offscreen texture, then a fullscreen post-process pass.</div></span>
             <span class="badge badge-advanced">Advanced</span></li>
 
+        <li><span class="num">13</span>
+            <span class="title"><a href="13-shadercross-in-practice.html">Shadercross in Practice</a>
+            <div class="blurb">Author shaders once in HLSL; ship one binary that runs on Metal, Vulkan and D3D12. Both the runtime and offline workflows, via <code>SDL_shadercross</code>.</div></span>
+            <span class="badge badge-advanced">Advanced</span></li>
+
     </ul>
 </section>
 
 <section>
     <h2>How to run the code</h2>
     <p>
-        Every recipe's <em>Complete listing</em> is a drop-in replacement for
+        For recipes 01–12, every <em>Complete listing</em> is a drop-in
+        replacement for
         <a href="../../examples/cpp-gpu/triangle.cpp">examples/cpp-gpu/triangle.cpp</a>.
         Replace that file's contents, then build with <code>make run-gpu</code>
         from the repo root.
     </p>
     <p>
-        Shaders are written in <strong>Metal Shading Language (MSL)</strong>
-        and embedded as raw string literals. On macOS that compiles at runtime
-        and needs no extra tooling. On other platforms see
+        Recipe 13 lives in the sibling folder
+        <a href="../../examples/cpp-gpu-shadercross/triangle_shadercross.cpp"><code>examples/cpp-gpu-shadercross/</code></a>
+        because it has one extra dependency (SDL_shadercross), and is built
+        with <code>make run-shadercross</code>.
+    </p>
+    <p>
+        Shaders in recipes 01–12 are written in <strong>Metal Shading Language
+        (MSL)</strong> and embedded as raw string literals. On macOS that
+        compiles at runtime and needs no extra tooling. On other platforms see
         <a href="02-cross-platform-shaders.html">recipe 02</a> for the
-        SPIR-V / DXIL story.
+        SPIR-V / DXIL story, then jump to
+        <a href="13-shadercross-in-practice.html">recipe 13</a> for the real
+        cross-platform solution.
     </p>
 </section>
 

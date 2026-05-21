@@ -120,6 +120,19 @@ static SDL_GPUShader *load_shader(SDL_GPUDevice *dev,
         non-developer machines, build a real shader-compile step. Authoring in
         GLSL → SPIRV-Cross → all three targets is the conventional path.
     </div>
+
+    <div class="note">
+        <strong>See also:</strong>
+        <a href="13-shadercross-in-practice.html">Recipe 13 — Shadercross in
+        Practice</a> is the production-grade follow-up to this one. It uses
+        SDL's official cross-compiler,
+        <a href="https://github.com/libsdl-org/SDL_shadercross">SDL_shadercross</a>,
+        to author shaders <em>once</em> in HLSL and dispatch the right native
+        format (MSL/SPIRV/DXIL) per backend — exactly the dispatcher pattern
+        sketched above, but real and runnable. That recipe is the one
+        exception to this track's "no extra tooling beyond <code>brew install
+        sdl3</code>" rule.
+    </div>
 </section>
 
 <section>

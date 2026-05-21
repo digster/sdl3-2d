@@ -4,48 +4,59 @@ This document is the "big picture" — read it before diving into files.
 
 ## Goal
 
-A minimal, reusable SDL3 starter for macOS shipped as **three fully
+A minimal, reusable SDL3 starter for macOS shipped as **four fully
 independent examples**, each isolating exactly one thing to learn:
 
 - **`examples/c/`** — C, a hand-written `while` game loop, 2D renderer.
 - **`examples/cpp/`** — C++, the SDL3 callback loop, 2D renderer.
 - **`examples/cpp-gpu/`** — C++, the lower-level `SDL_GPU` API: a basic
-  graphics pipeline that abstracts Metal/Vulkan/D3D12.
+  graphics pipeline that abstracts Metal/Vulkan/D3D12. Shaders are embedded
+  MSL source — macOS-only by design, no extra tooling.
+- **`examples/cpp-gpu-shadercross/`** — C++, the same pipeline but with
+  **cross-platform shaders**: one HLSL source compiled to SPIR-V at runtime
+  (or build time) via `SDL_shadercross`, then dispatched to whatever the
+  device's backend natively wants (MSL/SPIRV/DXIL).
 
 It is intentionally tiny: a base to copy into future experiments, not a
 framework. The first two demonstrate the two SDL3 game-loop styles on the
 high-level 2D renderer; the third drops a tier to show the GPU-pipeline
 machinery (it does not use the 2D renderer or `gfx` at all — the two APIs are
-mutually exclusive).
+mutually exclusive); the fourth keeps the same render pipeline but swaps the
+shader-acquisition path for the portable one a real cross-platform engine
+ships with.
 
 The defining decision: **the examples share no source.** Any folder can be
 copied out on its own and built with nothing else present. The ~135 lines of
 drawing helpers are *deliberately duplicated* between `c/` and `cpp/` (once in
-C, once in idiomatic C++); the GPU example is self-contained in a single file.
-Independence — not code reuse — is the property this template teaches.
+C, once in idiomatic C++); the two GPU examples are each self-contained in a
+single file. Independence — not code reuse — is the property this template
+teaches.
 
 ## Component map
 
 ```
-examples/c/                  examples/cpp/                 examples/cpp-gpu/
-  gfx.h   (C API + ref)        gfx.hpp (C++ API + ref)       triangle.cpp
-  gfx.c   (compiled as C)      gfx.cpp (compiled as C++)       embedded MSL
-  traditional.c                callbacks.cpp                   shaders;
-  (owns main()+while loop)     (SDL drives SDL_App*)           no gfx
-        │                            │                            │
-        ▼                            ▼                            ▼
-  build/demo_traditional       build/demo_callbacks         build/demo_gpu
-   (2D renderer)                (2D renderer)                (SDL_GPU pipeline)
+examples/c/             examples/cpp/           examples/cpp-gpu/     examples/cpp-gpu-shadercross/
+  gfx.h (C API + ref)     gfx.hpp (C++ API+ref)   triangle.cpp           triangle_shadercross.cpp
+  gfx.c (compiled as C)   gfx.cpp (as C++)          embedded MSL           embedded HLSL strings +
+  traditional.c           callbacks.cpp             shaders;               shaders/*.hlsl files;
+  (main()+while loop)     (SDL drives SDL_App*)     no gfx                 no gfx
+        │                       │                         │                         │
+        ▼                       ▼                         ▼                         ▼
+  build/demo_traditional  build/demo_callbacks      build/demo_gpu          build/demo_gpu_shadercross
+  (2D renderer)           (2D renderer)             (SDL_GPU pipeline)      (SDL_GPU + SDL_shadercross,
+                                                                             OPTIONAL — skipped cleanly
+                                                                             if shadercross not installed)
 ```
 
 There is **no arrow between the columns.** `examples/c/` is compiled and
-linked entirely by the C compiler; `examples/cpp/` and `examples/cpp-gpu/`
-entirely by the C++ compiler, each with its own private include path so no
-folder can see another. The only thing the three share is that all call the
-same plain-C **SDL3** library — which is exactly why each scene can be
-expressed with no shared code. The GPU example notably does **not** include
-`gfx`: it uses `SDL_GPU`, a different SDL3 subsystem from the 2D renderer the
-other two use.
+linked entirely by the C compiler; the three C++ folders entirely by the C++
+compiler, each with its own private include path so no folder can see another.
+The only thing the four share is that all call the same plain-C **SDL3**
+library — which is exactly why each scene can be expressed with no shared
+code. The two GPU examples notably do **not** include `gfx`: they use
+`SDL_GPU`, a different SDL3 subsystem from the 2D renderer the other two use.
+The shadercross example additionally depends on `SDL_shadercross` — that link
+is the one exception to the brew-only-deps rule (see *conventions* below).
 
 > Contrast with C's prefix convention: the C copy disambiguates names with a
 > `gfx_` prefix (`gfx_circle`); the C++ copy uses a `gfx` **namespace**
@@ -106,6 +117,32 @@ Like `callbacks.cpp`, it must **not** call `SDL_Quit()` (the
 `SDL_MAIN_USE_CALLBACKS` runtime does that after `SDL_AppQuit`); it releases
 its GPU objects through the device.
 
+**`examples/cpp-gpu-shadercross/triangle_shadercross.cpp`** runs the **same
+render lifecycle** as `cpp-gpu/triangle.cpp` (acquire command buffer → acquire
+swapchain → render pass → submit, with identical NULL-swapchain handling), but
+swaps in a different **shader-acquisition lifecycle** in front of pipeline
+creation:
+
+```
+SDL_ShaderCross_Init()
+  ─► (mode RUNTIME) HLSL source string ─► SDL_ShaderCross_CompileSPIRVFromHLSL
+  ─► (mode SPIRV)   .spv file on disk   ─► SDL_LoadFile
+  ─► SDL_ShaderCross_CompileGraphicsShaderFromSPIRV (transpiles inside to MSL /
+                                                     DXIL when needed)
+  ─► SDL_GPUShader * ─► SDL_CreateGPUGraphicsPipeline
+                                                       …same per-frame loop…
+  ─► SDL_ShaderCross_Quit() in SDL_AppQuit (paired with the Init above; called
+                                            even on early-fail paths)
+```
+
+The pivotal API is `SDL_ShaderCross_CompileGraphicsShaderFromSPIRV` — it takes
+SPIR-V and returns a shader in whatever format the device actually wanted, so
+the rest of the file never has to branch on the GPU backend. This is what makes
+*one* binary build from *one* HLSL source viable on Metal, Vulkan and D3D12.
+The `--mode runtime|spirv` flag exists only to let the same example show both
+where the SPIR-V can come from (embedded source compiled at startup vs.
+pre-built bytecode loaded from disk).
+
 ## Build architecture (two paths, both keep the examples disjoint)
 
 | | Makefile (primary) | CMake (alternative) |
@@ -116,17 +153,26 @@ its GPU objects through the device.
 
 Both build systems compile each example **only from its own folder**, with
 that folder as the sole project include path (`-Iexamples/c` /
-`-Iexamples/cpp` / `-Iexamples/cpp-gpu`), into separate object trees
-(`build/c/`, `build/cpp/`, `build/cpp-gpu/`). There is no shared object and no
-shared library — removing any one folder cannot break the others.
+`-Iexamples/cpp` / `-Iexamples/cpp-gpu` / `-Iexamples/cpp-gpu-shadercross`),
+into separate object trees (`build/c/`, `build/cpp/`, `build/cpp-gpu/`,
+`build/cpp-gpu-shadercross/`). There is no shared object and no shared
+library — removing any one folder cannot break the others. The shadercross
+target is conditionally included: detected via `pkg-config --exists
+sdl3-shadercross` (Make) or `find_package(SDL3_shadercross CONFIG QUIET)`
+(CMake); if absent, the other three build normally and a friendly note points
+at the build instructions in
+[examples/cpp-gpu-shadercross/README.md](examples/cpp-gpu-shadercross/README.md).
 
-`make smoke` and the `--frames N` argument all three examples accept exist so
-the build can be verified **non-interactively** (render N frames, exit 0)
-without a human closing windows — useful for CI later. (The GPU example's
-NULL-swapchain handling is what keeps it valid headless; see the lifecycle
-above.) Proving independence directly: `cd examples/cpp-gpu && clang++ -I.
-triangle.cpp $(pkg-config --cflags --libs sdl3)` builds the GPU demo with the
-other folders literally invisible (and likewise for `c/`, `cpp/`).
+`make smoke` and the `--frames N` argument all examples accept exist so the
+build can be verified **non-interactively** (render N frames, exit 0) without
+a human closing windows — useful for CI later. The two GPU examples'
+NULL-swapchain handling is what keeps them valid headless; see the lifecycle
+above. `smoke` runs the shadercross binary too **when** present. Proving
+independence directly: `cd examples/cpp-gpu && clang++ -I. triangle.cpp
+$(pkg-config --cflags --libs sdl3)` builds the GPU demo with the other
+folders literally invisible (and likewise for `c/`, `cpp/`,
+`cpp-gpu-shadercross/` — the last also needs `pkg-config --cflags --libs
+sdl3-shadercross`).
 
 **Editor IntelliSense is a third, read-only consumer of the build, not part
 of it.** A language server parses files with no flags and so can't resolve
@@ -156,10 +202,29 @@ so the template is correct on clone; the generated DB itself is git-ignored
   intentional — do not "DRY" it back into a shared file).
 - **Window size is queried each frame** in the 2D examples, not hardcoded, so
   animation stays correct after a resize.
-- **GPU shaders are embedded MSL source, never precompiled bytecode.** The
-  Metal backend compiles them at runtime, so the template needs no offline
-  shader toolchain (SPIR-V/`shadercross`). This is a deliberate constraint —
-  it preserves the "just `brew install sdl3`" promise. Keep it that way.
+- **GPU shaders in `cpp-gpu/` are embedded MSL source, never precompiled
+  bytecode.** The Metal backend compiles them at runtime, so the template
+  needs no offline shader toolchain (SPIR-V/`shadercross`). This is a
+  deliberate constraint — it preserves the "just `brew install sdl3`" promise
+  for that example. Keep it that way.
+- **The `cpp-gpu-shadercross/` example is the one intentional exception** to
+  the brew-only-deps rule above. It depends on `SDL_shadercross` (built from
+  source on macOS — Homebrew has no formula yet), plus `glslang`
+  (`brew install glslang`) for `make shaders`. Both build systems detect
+  shadercross optionally and skip the target when missing. The other three
+  examples remain build-clean on a vanilla SDL3-only machine — verify with
+  `pkg-config --exists sdl3-shadercross || make` (the three demos build,
+  shadercross note prints, exit 0). Do not promote shadercross into a hard
+  prerequisite for the rest of the repo.
+- **`SDL_ShaderCross_CompileSPIRVFromHLSL` requires DXC** (Microsoft's
+  DirectX Shader Compiler), which is *not* bundled with shadercross on
+  macOS. So `--mode runtime` and `make shaders-hlsl` are the "advanced"
+  paths — they need a separate DXC install. The default `--mode spirv` and
+  `make shaders` path uses `glslangValidator` on the sibling `.glsl` files
+  and works on any shadercross build. The cross-platform-dispatch part of
+  the example (`SDL_ShaderCross_CompileGraphicsShaderFromSPIRV`) uses
+  SPIRV-Cross, which always ships with shadercross — that part never needs
+  DXC. Document this distinction; do not regress it.
 - **In the GPU example a NULL swapchain texture must still submit the command
   buffer.** It is a valid no-draw frame (minimized / headless), not an error;
   treating it as an error would break headless `make smoke`.
@@ -179,3 +244,10 @@ so the template is correct on clone; the generated DB itself is git-ignored
    scanline fill, geometry triangle).
 6. `examples/cpp-gpu/triangle.cpp` — the separate `SDL_GPU` tier: the
    graphics-pipeline lifecycle, narrated end to end, with embedded MSL shaders.
+7. (Optional/advanced) `examples/cpp-gpu-shadercross/triangle_shadercross.cpp` —
+   same pipeline, but shaders authored once in HLSL and translated through
+   `SDL_shadercross` so the binary is portable across Metal/Vulkan/D3D12.
+   Diff against `triangle.cpp` (#6) to see what the cross-platform
+   shader-acquisition path adds in isolation. Read its sibling
+   [`README.md`](examples/cpp-gpu-shadercross/README.md) first — it covers the
+   one-time `SDL_shadercross` install.

@@ -73,3 +73,27 @@ Decisions reached during planning:
   transfer buffers) — tightest focus on the pipeline itself.
 - New `examples/cpp-gpu/` folder, single self-contained `triangle.cpp`, its
   own build target/object tree; shares no source and does not use `gfx`.
+
+## 2026-05-20 — Cross-platform shaders via SDL_shadercross
+
+- I want a separate C++ example which demonstrates shaders made to target for
+  different platforms using shadercross
+- Make sure the example is well documented
+
+Decisions made interactively during planning:
+
+- Demo scope: runtime API + offline CLI side-by-side (so the example shows
+  both `SDL_ShaderCross_CompileSPIRVFromHLSL` at startup AND a `make shaders`
+  build target driving the `shadercross` CLI to emit inspectable
+  SPIRV/MSL/DXIL artifacts).
+- Build dependency strategy: optional — both Makefile and CMake detect
+  shadercross at configure time and skip the new target cleanly when missing,
+  so the other three examples keep their "just `brew install sdl3`" promise.
+- Docs strategy: add a new recipe `docs/3d/13-shadercross-in-practice.html`
+  (rather than rewriting recipe 02), with cross-links from recipe 02
+  ("See also") and recipe 12 (footer "next").
+
+Resulting in: new `examples/cpp-gpu-shadercross/` folder
+(`triangle_shadercross.cpp` + parallel `.hlsl` and `.glsl` shader sources +
+sibling `README.md`), Makefile/CMake updates for optional detection, and the
+new recipe 13.
