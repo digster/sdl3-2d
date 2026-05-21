@@ -7,15 +7,18 @@
 #   cmake -B build
 #   cmake --build build
 #   ./build/demo_traditional   ./build/demo_callbacks
-#   ./build/demo_gpu           ./build/demo_gpu_shadercross    (the last only
-#                                                               if SDL_shadercross
+#   ./build/demo_gpu           ./build/demo_gpu_shadercross    (only built if
+#                                                               SDL_shadercross
 #                                                               is installed)
+#   ./build/demo_bgfx          ./build/demo_bgfx_triangle      (only built if
+#                                                               bgfx is found
+#                                                               at BGFX_PREFIX)
 #
 # The demos are FULLY INDEPENDENT: each executable is built only from its own
-# folder (examples/c, examples/cpp, examples/cpp-gpu, examples/cpp-gpu-shadercross),
-# with that folder on its private include path. There is no shared gfx library
-# and no cross-linking. The shadercross target is optional — see the find_package
-# block at the bottom.
+# folder (examples/c, examples/cpp, examples/cpp-gpu, examples/cpp-gpu-shadercross,
+# examples/cpp-bgfx), with that folder on its private include path. There is
+# no shared gfx library and no cross-linking. The shadercross and bgfx targets
+# are independently optional — see the find_package blocks at the bottom.
 
 cmake_minimum_required(VERSION 3.16)
 
@@ -105,4 +108,63 @@ else()
     message(STATUS
         "SDL_shadercross not found — skipping demo_gpu_shadercross. "
         "See examples/cpp-gpu-shadercross/README.md to build it from source.")
+endif()
+
+# --- C++ bgfx examples — alternate GPU abstraction (Metal/Vulkan/D3D12 abstracted
+#     under one rendering library). Optional, like shadercross. Two binaries from
+#     one folder: hello_bgfx (clear + debug text) and triangle_bgfx (full
+#     hello-triangle with vertex/index buffers + offline-compiled shaders).
+#
+#     Primary detection: find_package(bgfx CONFIG) against an installed prefix
+#     produced by `cmake --install` on bgfx.cmake. Fallback: synthesise IMPORTED
+#     targets from the in-tree-build directory so users who never ran
+#     `cmake --install` still get a working build.
+#
+#     See examples/cpp-bgfx/README.md for the four-step bgfx.cmake setup. ---
+set(_bgfx_prefix "$ENV{BGFX_PREFIX}")
+if(NOT _bgfx_prefix)
+    set(_bgfx_prefix "${CMAKE_SOURCE_DIR}/third_party/bgfx-install/install")
+endif()
+
+# 1. Try the canonical CONFIG path first (works after `cmake --install`).
+find_package(bgfx CONFIG QUIET
+    HINTS "${_bgfx_prefix}/lib/cmake"
+          "${CMAKE_SOURCE_DIR}/third_party/bgfx-install/install/lib/cmake")
+
+# 2. Fallback: in-tree-build layout. Synthesises bgfx::{bgfx,bx,bimg} IMPORTED
+#    targets that mirror what the installed package config would have provided,
+#    so the add_executable block below is the same either way.
+if(NOT bgfx_FOUND)
+    set(_bgfx_src "${CMAKE_SOURCE_DIR}/third_party/bgfx-install")
+    if(EXISTS "${_bgfx_src}/bgfx/include/bgfx/bgfx.h"
+       AND EXISTS "${_bgfx_src}/cmake-build/cmake/bgfx/libbgfx.a")
+        foreach(comp bgfx bx bimg)
+            add_library(bgfx::${comp} STATIC IMPORTED)
+            set_target_properties(bgfx::${comp} PROPERTIES
+                IMPORTED_LOCATION "${_bgfx_src}/cmake-build/cmake/${comp}/lib${comp}.a"
+                INTERFACE_INCLUDE_DIRECTORIES "${_bgfx_src}/${comp}/include")
+        endforeach()
+        set(bgfx_FOUND ON)
+    endif()
+endif()
+
+if(bgfx_FOUND)
+    add_executable(demo_bgfx          examples/cpp-bgfx/hello_bgfx.cpp)
+    add_executable(demo_bgfx_triangle examples/cpp-bgfx/triangle_bgfx.cpp)
+    # Per-target isolation: each folder is its own private include root, same
+    # rule as the SDL_Renderer / SDL_GPU / shadercross examples above. Apple-
+    # framework dependencies are bgfx's Metal backend's link-time requirements
+    # — see the matching list in Makefile's BGFX_LIBS variable.
+    foreach(tgt demo_bgfx demo_bgfx_triangle)
+        target_include_directories(${tgt} PRIVATE examples/cpp-bgfx)
+        target_link_libraries(${tgt} PRIVATE
+            SDL3::SDL3 bgfx::bgfx bgfx::bimg bgfx::bx
+            "-framework Metal" "-framework MetalKit" "-framework Foundation"
+            "-framework QuartzCore" "-framework IOKit" "-framework Cocoa")
+        target_compile_options(${tgt} PRIVATE -Wall -Wextra)
+    endforeach()
+else()
+    message(STATUS
+        "bgfx not found near ${_bgfx_prefix} — skipping demo_bgfx / demo_bgfx_triangle. "
+        "See examples/cpp-bgfx/README.md to build bgfx.cmake from source.")
 endif()

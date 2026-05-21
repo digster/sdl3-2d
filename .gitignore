@@ -9,10 +9,21 @@ demo_traditional
 demo_callbacks
 demo_gpu
 demo_gpu_shadercross
+demo_bgfx
+demo_bgfx_triangle
 
 # Cross-compiled shaders produced by `make shaders` (reproducible from the
 # .hlsl sources in examples/cpp-gpu-shadercross/shaders/).
 examples/cpp-gpu-shadercross/shaders/build/
+
+# Cross-compiled shaders produced by `make bgfx-shaders` (reproducible from
+# the .sc sources in examples/cpp-bgfx/shaders/).
+examples/cpp-bgfx/shaders/build/
+
+# Vendored third-party source/builds (bgfx.cmake clone + install prefix).
+# bgfx is built from source by the user; the prefix is large (~500 MB
+# with submodules) and machine-specific, so keep it out of git entirely.
+third_party/
 
 # CMake artifacts (if configured outside build/)
 CMakeCache.txt

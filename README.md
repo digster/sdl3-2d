@@ -1,6 +1,6 @@
 # sdl3-2d
 
-A small, reusable **SDL3** starter for macOS. It ships **four fully
+A small, reusable **SDL3** starter for macOS. It ships **five fully
 independent examples**, each in its own folder and each isolating one thing to
 learn:
 
@@ -10,9 +10,15 @@ learn:
   graphics pipeline (the "hello triangle") that abstracts Metal/Vulkan/D3D12.
 - **`examples/cpp-gpu-shadercross/`** — **C++**, the same pipeline but with
   **cross-platform shaders** authored once in HLSL and translated to
-  MSL/SPIRV/DXIL at runtime via **`SDL_shadercross`** (the only example with a
-  dependency beyond `brew install sdl3` — see [its README](examples/cpp-gpu-shadercross/README.md);
-  detected optionally so the other three keep building without it).
+  MSL/SPIRV/DXIL at runtime via **`SDL_shadercross`** (optional; see
+  [its README](examples/cpp-gpu-shadercross/README.md); detected optionally
+  so the other examples keep building without it).
+- **`examples/cpp-bgfx/`** — **C++**, the same hello-triangle (plus a
+  no-shader sibling demo) re-implemented on top of [**bgfx**](https://github.com/bkaradzic/bgfx)
+  — a long-running cross-platform rendering library — instead of SDL_GPU.
+  Read alongside `cpp-gpu/` to see two GPU abstractions on the same SDL3
+  windowing layer (optional; see
+  [its README](examples/cpp-bgfx/README.md) for the bgfx.cmake install).
 
 The examples share **no source**. Copy any folder out on its own and it still
 builds — that independence (not code reuse) is the point of the template.
@@ -28,8 +34,11 @@ builds — that independence (not code reuse) is the point of the template.
 | `examples/cpp-gpu/triangle.cpp` | C++ example: a basic **`SDL_GPU`** graphics pipeline (device → shaders → pipeline → render pass). Single self-contained file, embedded MSL shaders, callback model. No `gfx` — see below. |
 | `examples/cpp-gpu-shadercross/triangle_shadercross.cpp` | C++ example: the **same triangle, cross-platform shaders**. One HLSL source → SPIR-V via `SDL_shadercross` → backend-native (MSL/SPIRV/DXIL). Two run modes: embedded HLSL at runtime, or pre-compiled `.spv` from `make shaders`. |
 | `examples/cpp-gpu-shadercross/shaders/*.hlsl` | The HLSL sources used both as embedded strings (runtime mode) and as input to the offline `shadercross` CLI driven by `make shaders`. |
-| `Makefile` | Primary build/run/debug driver (pkg-config based). Independent targets, optional shadercross detection. |
-| `CMakeLists.txt` | Alternative build path (IDE-friendly, `find_package(SDL3)` + optional `find_package(SDL3_shadercross)`). |
+| `examples/cpp-bgfx/hello_bgfx.cpp` | C++ example: SDL3 + **bgfx** wiring — clear + bgfx debug-text overlay. No shader pipeline; teaches the platform-data handoff, single-threaded mode opt-in, and the per-frame `setViewClear`/`touch`/`frame` lifecycle. |
+| `examples/cpp-bgfx/triangle_bgfx.cpp` | C++ example: the **same hello-triangle as `cpp-gpu/`**, rendered through bgfx. Vertex/index buffers via `bgfx::makeRef`, offline-compiled `.sc` shader bytecode loaded at runtime, full `submit(view, program)` cycle. |
+| `examples/cpp-bgfx/shaders/*.sc` | bgfx-flavoured shader sources (extended GLSL). Compiled to Metal bytecode by `make bgfx-shaders` via bgfx's bundled `shaderc`. |
+| `Makefile` | Primary build/run/debug driver (pkg-config based). Independent targets, optional shadercross + bgfx detection. |
+| `CMakeLists.txt` | Alternative build path (IDE-friendly, `find_package(SDL3)` + optional `find_package(SDL3_shadercross)` + optional `find_package(bgfx)`). |
 
 The two **2D-renderer** examples (`c/`, `cpp/`) render the same scene (every
 helper exercised once, plus a delta-time–driven bouncing ball) so you can
@@ -57,28 +66,35 @@ brew install sdl3
 ## Build & run (Makefile — primary)
 
 ```sh
-make                    # build all available demos into build/   (release, -O2)
-make run-c              # build + run the C / traditional-loop demo
-make run-cpp            # build + run the C++ / callbacks demo
-make run-gpu            # build + run the C++ / SDL_GPU triangle demo
-make run-shadercross    # build + run the C++ / SDL_shadercross demo (needs shadercross)
-make smoke              # build all, run each headless-ish for 120 frames, exit
-make shaders            # compile the GLSL sources to SPIR-V via glslangValidator (default;
-                        # no DXC needed). Writes into examples/cpp-gpu-shadercross/shaders/build/
-make shaders-hlsl       # same idea but from HLSL via the `shadercross` CLI (needs DXC)
-make debug-c            # rebuild C demo with -g -O0 and open lldb
-make debug-cpp          # rebuild C++ demo with -g -O0 and open lldb
-make debug-gpu          # rebuild GPU demo with -g -O0 and open lldb
-make debug-shadercross  # rebuild shadercross demo with -g -O0 and open lldb
-make compdb             # (re)generate compile_commands.json for editor IntelliSense
-make clean              # remove build/
+make                       # build all available demos into build/   (release, -O2)
+make run-c                 # build + run the C / traditional-loop demo
+make run-cpp               # build + run the C++ / callbacks demo
+make run-gpu               # build + run the C++ / SDL_GPU triangle demo
+make run-shadercross       # build + run the C++ / SDL_shadercross demo (needs shadercross)
+make run-bgfx              # build + run the C++ / bgfx hello demo (needs bgfx)
+make run-bgfx-triangle     # build + run the C++ / bgfx hello-triangle demo (needs bgfx + .bin shaders)
+make smoke                 # build all, run each headless-ish for 120 frames, exit
+make shaders               # compile the GLSL sources to SPIR-V via glslangValidator (default;
+                           # no DXC needed). Writes into examples/cpp-gpu-shadercross/shaders/build/
+make shaders-hlsl          # same idea but from HLSL via the `shadercross` CLI (needs DXC)
+make bgfx-shaders          # compile the .sc bgfx shader sources to Metal bytecode via
+                           # bgfx's `shaderc`. Writes into examples/cpp-bgfx/shaders/build/metal/
+make debug-c               # rebuild C demo with -g -O0 and open lldb
+make debug-cpp             # rebuild C++ demo with -g -O0 and open lldb
+make debug-gpu             # rebuild GPU demo with -g -O0 and open lldb
+make debug-shadercross     # rebuild shadercross demo with -g -O0 and open lldb
+make debug-bgfx            # rebuild bgfx hello demo with -g -O0 and open lldb
+make debug-bgfx-triangle   # rebuild bgfx triangle demo with -g -O0 and open lldb
+make compdb                # (re)generate compile_commands.json for editor IntelliSense
+make clean                 # remove build/
 ```
 
 > `make run-shadercross`, `make debug-shadercross`, and `make shaders` require
-> SDL_shadercross to be installed — see
-> [examples/cpp-gpu-shadercross/README.md](examples/cpp-gpu-shadercross/README.md).
-> The default `make` and `make smoke` skip those targets cleanly when shadercross
-> is absent.
+> SDL_shadercross — see [its README](examples/cpp-gpu-shadercross/README.md).
+> `make run-bgfx*`, `make debug-bgfx*`, and `make bgfx-shaders` require bgfx —
+> see [its README](examples/cpp-bgfx/README.md). The default `make` and
+> `make smoke` skip those optional targets cleanly when their toolchains are
+> absent.
 
 Force a debug build for any target with `make DEBUG=1 <target>`.
 
@@ -98,7 +114,8 @@ cmake --build build
 ./build/demo_callbacks
 ./build/demo_gpu
 ./build/demo_gpu_shadercross      # only present if SDL_shadercross was found
-                                  #   (CMake prints a STATUS message either way)
+./build/demo_bgfx                 # only present if bgfx was found at BGFX_PREFIX
+./build/demo_bgfx_triangle        #   (CMake prints a STATUS message either way)
 ```
 
 ## Editor / IDE setup (IntelliSense)
@@ -219,18 +236,54 @@ workflow that real games ship with against the runtime convenience layer:
   shadercross built with DXC (see the sibling README for the DXC install
   steps on macOS).
 
-**This is the only example with a dependency beyond `brew install sdl3`** —
-SDL_shadercross is not in Homebrew, you build it from source. The trade is
-explained, with macOS-specific build steps, in
+This and the bgfx examples below are the **two examples with dependencies
+beyond `brew install sdl3`** — SDL_shadercross is not in Homebrew, you build
+it from source. The trade is explained, with macOS-specific build steps, in
 [examples/cpp-gpu-shadercross/README.md](examples/cpp-gpu-shadercross/README.md).
 Both the Makefile and CMake detect shadercross at configure time and skip this
-target cleanly when it is absent — so the other three demos keep building on a
+target cleanly when it is absent — so the four core demos keep building on a
 vanilla SDL3-only machine.
 
 Run it with `make shaders && make run-shadercross` (the `shaders` step
 compiles the GLSL sources to SPIR-V via `glslangValidator`; the
 shadercross-only path needs DXC which isn't bundled — see the sibling
 README's *Advanced* section to enable that).
+
+## The bgfx examples
+
+`examples/cpp-bgfx/` re-implements the same hello-triangle as `cpp-gpu/`, but
+on top of [**bgfx**](https://github.com/bkaradzic/bgfx) instead of SDL_GPU.
+The folder contains **two** demos so the SDL3↔bgfx wiring and the GPU
+pipeline-building can be taught separately:
+
+- **`demo_bgfx`** (`hello_bgfx.cpp`) — the wiring demo. SDL3 window → native
+  handle handoff → bgfx init → per-frame `setViewClear` / `touch` / `frame`,
+  plus the bgfx debug-text overlay so you can see the active backend
+  ("renderer: Metal") on screen. No shaders, no buffers — focused on the
+  genuinely new thing: integrating bgfx with SDL3.
+- **`demo_bgfx_triangle`** (`triangle_bgfx.cpp`) — the full hello-triangle.
+  Same wiring + a `bgfx::VertexLayout`, vertex/index buffers, and offline-
+  compiled shader bytecode loaded via `bgfx::createShader` /
+  `bgfx::createProgram`. Diff against `cpp-gpu/triangle.cpp` to see how the
+  two GPU abstractions feel side by side.
+
+bgfx ships its own shader compiler (`shaderc`) and its own `.sc` shader
+dialect — so the triangle demo's shaders live as `.sc` files in
+`examples/cpp-bgfx/shaders/`, get compiled to per-renderer bytecode by
+`make bgfx-shaders`, and are loaded as `.bin` files at runtime. Same offline-
+compile philosophy as `make shaders` for the shadercross example.
+
+Like `cpp-gpu-shadercross`, the bgfx example has a dependency beyond
+`brew install sdl3`: bgfx isn't in Homebrew, so it's built from source via
+the [`bgfx.cmake`](https://github.com/bkaradzic/bgfx.cmake) wrapper repo.
+The four-step setup (`git clone` → configure → build → install + a small
+copy step) is documented in
+[examples/cpp-bgfx/README.md](examples/cpp-bgfx/README.md). Both the Makefile
+and CMake detect bgfx at configure time and skip the bgfx targets cleanly
+when it is absent.
+
+Run them with `make run-bgfx` (no shader compile needed) and
+`make bgfx-shaders && make run-bgfx-triangle`.
 
 ## Recipes (tutorial track)
 
