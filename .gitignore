@@ -23,7 +23,7 @@ examples/cpp-bgfx/shaders/build/
 # Vendored third-party source/builds (bgfx.cmake clone + install prefix).
 # bgfx is built from source by the user; the prefix is large (~500 MB
 # with submodules) and machine-specific, so keep it out of git entirely.
-third_party/
+#third_party/
 
 # CMake artifacts (if configured outside build/)
 CMakeCache.txt
